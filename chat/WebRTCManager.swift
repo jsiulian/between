@@ -198,7 +198,7 @@ final class WebRTCManager: NSObject, ObservableObject {
             }
         }
         connectionTimeoutWorkItem = workItem
-        DispatchQueue.main.asyncAfter(deadline: .now() + 5.0, execute: workItem)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 15.0, execute: workItem)
     }
 
     private func cancelConnectionTimeout() {
@@ -362,7 +362,7 @@ final class WebRTCManager: NSObject, ObservableObject {
             DispatchQueue.main.async {
                 self.incomingConnectionPeerId = from
                 self.incomingConnectionType = isAudio ? "Voice Call" : "Text Chat"
-                self.connectionDecisionCallback = { [weak self] accepted in
+                self.connectionDecisionCallback = { [weak self = self] accepted in
                     guard let self = self else { return }
                     if accepted {
                         // If they accepted an audio call, make sure this manager is enabled for audio

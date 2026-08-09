@@ -254,7 +254,6 @@ struct ConnectView: View {
                         Image(systemName: "arrow.right.to.line.compact")
                             .font(.body.weight(.semibold))
                             .frame(width: 36, height: 36)
-                            .background(.blue.opacity(0.12), in: Circle())
                     }
                     .buttonStyle(.plain)
                 }

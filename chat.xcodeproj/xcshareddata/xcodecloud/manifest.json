@@ -1,0 +1,9 @@
+{
+  "id" : "5b12cdee-629a-4bbb-9947-a90dc9c314b9",
+  "targets" : [
+    {
+      "id" : "5DB52E31-3729-44F0-85F2-D48F32E316D2",
+      "name" : "chat"
+    }
+  ]
+}
