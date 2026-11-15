@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>chatxp.core</RootNamespace>
+    <AssemblyName>chatxp.Core</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- SQLite persistence (replaces SwiftData) -->
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="9.0.0" />
+  </ItemGroup>
+
+  <!-- WebRTC (replaces the iOS webrtc/rtcclient pod). Native binaries ship with the package. -->
+  <!-- NOTE: WebRTC.Client is only available in prerelease and may not yet support net10.0;
+       verify the right package version before relying on it. -->
+  <!-- <ItemGroup>
+    <PackageReference Include="WebRTC.Client" Version="1.75.0.1" />
+  </ItemGroup> -->
+
+</Project>

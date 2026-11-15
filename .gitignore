@@ -64,3 +64,8 @@ fastlane/test_output
 # node 
 server/node_modules
 server/package-lock.json
+.juggler/**
+chatxp/chatxp.Core.Tests/bin/**
+chatxp/chatxp.Core.Tests/obj/**
+chatxp/chatxp.Core/bin/**
+chatxp/chatxp.Core/obj/**

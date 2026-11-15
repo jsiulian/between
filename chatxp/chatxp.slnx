@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="chatxp.Core.Tests/chatxp.Core.Tests.csproj" />
+  <Project Path="chatxp.Core/chatxp.Core.csproj" />
+</Solution>
