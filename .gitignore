@@ -69,3 +69,8 @@ chatxp/chatxp.Core.Tests/bin/**
 chatxp/chatxp.Core.Tests/obj/**
 chatxp/chatxp.Core/bin/**
 chatxp/chatxp.Core/obj/**
+chatxp/.idea/**
+chatxp/chatxp.App.Tests/bin/**
+chatxp/chatxp.App.Tests/obj/**
+chatxp/chatxp.App/bin/**
+chatxp/chatxp.App/obj/**

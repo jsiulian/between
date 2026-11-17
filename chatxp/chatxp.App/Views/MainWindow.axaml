@@ -1,0 +1,126 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:chatxp.App.ViewModels"
+        xmlns:services="using:chatxp.App.Services"
+        xmlns:cnv="using:chatxp.App.Converters"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="600"
+        x:Class="chatxp.App.Views.MainWindow"
+        x:DataType="vm:MainViewModel"
+        Title="chatxp — Between, cross-platform"
+        Width="720" Height="600">
+
+    <Design.DataContext>
+        <vm:MainViewModel />
+    </Design.DataContext>
+
+    <Window.Resources>
+        <cnv:MineToBackgroundConverter x:Key="MineToBackground" />
+        <cnv:BoolToBrushConverter x:Key="BoolToBrush" />
+        <cnv:MineToAlignmentConverter x:Key="MineToAlignment" />
+    </Window.Resources>
+
+    <Grid RowDefinitions="Auto,*,Auto">
+        <!-- Header: my ID + status -->
+        <Border Grid.Row="0" Background="#1b1b23" Padding="14,10">
+            <Grid ColumnDefinitions="*,Auto">
+                <StackPanel Grid.Column="0" Spacing="2">
+                    <TextBlock Text="My ID" FontSize="11" Opacity="0.6" Foreground="White"/>
+                    <Button Command="{Binding CopyMyIdCommand}" Padding="0" Background="Transparent"
+                            BorderThickness="0" HorizontalAlignment="Left" Cursor="Hand">
+                        <TextBlock Text="{Binding MyId}" FontFamily="Monospace" FontSize="11"
+                                   Foreground="#8ab4ff" TextTrimming="CharacterEllipsis" MaxWidth="480"/>
+                    </Button>
+                </StackPanel>
+                <Border Grid.Column="1" CornerRadius="12" Background="#2d2d3a" Padding="10,4" VerticalAlignment="Center">
+                    <TextBlock Text="{Binding Status}" Foreground="White" FontSize="12"/>
+                </Border>
+            </Grid>
+        </Border>
+
+        <!-- Content -->
+        <TabControl Grid.Row="1">
+            <TabItem Header="Connect">
+                <ScrollViewer>
+                    <StackPanel Spacing="10" Margin="20">
+                        <TextBlock Text="Start a chat" FontSize="16" FontWeight="Bold"/>
+                        <TextBlock TextWrapping="Wrap" Opacity="0.7"
+                                   Text="Paste the other person's ID (their public key) and connect. Exchange IDs out of band — the signaling server never sees message content."/>
+                        <TextBox Text="{Binding ConnectToId}" Watermark="Peer ID (Base64 public key)…"
+                                 MinHeight="56" TextWrapping="Wrap"/>
+                        <Button Content="Connect" Command="{Binding ConnectCommand}"
+                                HorizontalAlignment="Left" Padding="16,6"/>
+                        <Separator/>
+                        <TextBlock Text="Signaling server" FontSize="14" FontWeight="Bold"/>
+                        <TextBlock TextWrapping="Wrap" Opacity="0.7"
+                                   Text="Handshake broker only — it forwards connection offers and never sees message content. Changes are saved and applied on restart too."/>
+                        <Grid ColumnDefinitions="*,Auto">
+                            <TextBox Grid.Column="0" Text="{Binding SignalServer}"
+                                     Watermark="ws://host:port/"/>
+                            <Button Grid.Column="1" Content="Apply" Margin="8,0,0,0" Padding="14,4"
+                                    Command="{Binding ApplyServerCommand}"
+                                    IsEnabled="{Binding !ApplyingServer}"/>
+                        </Grid>
+                        <Separator/>
+                        <TextBlock Text="Incoming" FontSize="14" FontWeight="Bold"/>
+                    <StackPanel Spacing="6" IsVisible="{Binding IncomingVisible}">
+                        <TextBlock Text="{Binding PeerId}" FontFamily="Monospace" FontSize="11"
+                                   TextTrimming="CharacterEllipsis"/>
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <Button Content="Accept" Command="{Binding AcceptIncomingCommand}" Padding="14,5"/>
+                            <Button Content="Reject" Command="{Binding RejectIncomingCommand}" Padding="14,5"/>
+                        </StackPanel>
+                    </StackPanel>
+                    <Button Content="Copy my ID" Command="{Binding CopyMyIdCommand}"
+                            HorizontalAlignment="Left" Padding="10,4"/>
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+
+            <TabItem Header="Chat">
+                <Grid RowDefinitions="*,Auto,Auto" Margin="8">
+                    <!-- Messages -->
+                    <ListBox Grid.Row="0" ItemsSource="{Binding Lines}"
+                             ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                        <ListBox.ItemTemplate>
+                            <DataTemplate x:DataType="services:ChatLine">
+                                <Border CornerRadius="10" Padding="10,6" Margin="4" MaxWidth="440"
+                                        Background="{Binding Mine, Converter={StaticResource MineToBackground}}"
+                                        HorizontalAlignment="{Binding Mine, Converter={StaticResource MineToAlignment}}">
+                                    <TextBlock Text="{Binding Text}" TextWrapping="Wrap"/>
+                                </Border>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+
+                    <!-- Typing indicator -->
+                    <TextBlock Grid.Row="1" Text="peer is typing…" FontStyle="Italic" Opacity="0.6"
+                               IsVisible="{Binding PeerIsTyping}" Margin="10,2"/>
+
+                    <!-- Input -->
+                    <Grid Grid.Row="2" ColumnDefinitions="*,Auto" Margin="6">
+                        <TextBox Grid.Column="0" Text="{Binding InputText}" Watermark="Message…"
+                                 KeyDown="OnInputKeyDown"/>
+                        <Button Grid.Column="1" Content="Send" Command="{Binding SendCommand}"
+                                Margin="8,0,0,0" Padding="14,4"/>
+                    </Grid>
+                </Grid>
+            </TabItem>
+        </TabControl>
+
+        <!-- Footer -->
+        <Border Grid.Row="2" Padding="14,8" Background="#16161d">
+            <StackPanel Orientation="Horizontal" Spacing="12">
+                <Ellipse Width="10" Height="10" VerticalAlignment="Center">
+                    <Ellipse.Fill>
+                        <MultiBinding Converter="{StaticResource BoolToBrush}">
+                            <Binding Path="IsConnected" />
+                        </MultiBinding>
+                    </Ellipse.Fill>                </Ellipse>
+                <TextBlock Text="{Binding ConnectionLabel}" Opacity="0.8" FontSize="11"/>
+            </StackPanel>
+        </Border>
+    </Grid>
+
+</Window>

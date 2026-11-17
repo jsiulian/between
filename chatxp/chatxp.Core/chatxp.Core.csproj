@@ -9,8 +9,13 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <InternalsVisibleTo Include="chatxp.Core.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
     <!-- SQLite persistence (replaces SwiftData) -->
-    <PackageReference Include="Microsoft.Data.Sqlite" Version="9.0.0" />
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="11.0.0" />
+    <PackageReference Include="SIPSorcery" Version="10.0.17" />
   </ItemGroup>
 
   <!-- WebRTC (replaces the iOS webrtc/rtcclient pod). Native binaries ship with the package. -->

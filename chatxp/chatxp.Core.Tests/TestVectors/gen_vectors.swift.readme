@@ -1,0 +1,4 @@
+Vectors generated 2026-11-16 by gen_vectors.swift on this machine (Swift 6.4.2 / CryptoKit),
+exact Encrypt.swift crypto flow with fixed private scalars (see CryptoVectorTests.cs).
+Alice scalar = 0x00..0x1F; Bob scalar = DE AD BE EF || 0x00..0x1B.
+Run: swiftc -o gen gen_vectors.swift && ./gen

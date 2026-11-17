@@ -8,7 +8,7 @@ public class E2eeCryptoTests
 {
     private static (E2eeCrypto key, string peerPublicKey) CreateKeyPair()
     {
-        var crypto = new E2eeCrypto(ECDiffieHellman.Create());
+        var crypto = E2eeCrypto.Create();
         return (crypto, crypto.Base64PublicKey);
     }
 
@@ -18,9 +18,9 @@ public class E2eeCryptoTests
         var (crypto, _) = CreateKeyPair();
         var b64 = crypto.Base64PublicKey;
         var raw = Convert.FromBase64String(b64);
-        // SEC1 uncompressed point: 65 bytes for P-256.
-        Assert.Equal(65, raw.Length);
-        Assert.Equal(0x04, raw[0]);
+        // CryptoKit rawRepresentation: raw coordinate pair X || Y, 64 bytes for P-256
+        // (no SEC1 0x04 prefix — verified against CryptoKit, see CryptoVectorTests).
+        Assert.Equal(64, raw.Length);
     }
 
     [Fact]
