@@ -7,6 +7,8 @@ struct chatApp: App {
     var sharedModelContainer: ModelContainer = {
         let schema = Schema([
             Message.self,
+            Tombstone.self,
+            ConversationClear.self,
             Contact.self,
             BlockedUser.self
         ])

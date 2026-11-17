@@ -20,6 +20,10 @@ Core stack complete and tested (27/27):
   trickle ICE, 15s timeout, drop signaling once P2P, typed `Event` send queue.
 - ✅ **SQLite persistence** — messages (encrypted at rest), contacts, blocked users,
   conversation + history queries mirroring the SwiftData screens.
+- ✅ **CRDT offline sync** — conversations are idempotent op logs; peers replay their ops
+  when the data channel opens, so messages sent while disconnected converge. Deletes are
+  tombstones; local hides and history clears survive replay. Wire-compatible with iOS
+  (`CRDT.md`; `chatxp.Core/Crdt/ChatCrdt.cs`).
 - ✅ **Avalonia UI** — Connect (peer id + incoming accept/reject), Chat (bubbles,
   typing indicator, send), status footer.
 - 🚫 **Voice calls** — deferred; see `business-requirements.md` § 5.1 (Todo).

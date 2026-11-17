@@ -15,17 +15,13 @@ struct HistoryView: View {
     @State var searchQuery = ""
     
     private var filteredMessages: [Message] {
-
+        let visible = messages.filter { !$0.hidden }
         if searchQuery.isEmpty {
-
-            return messages
-
+            return visible
         }
-
-        return messages.filter {
+        return visible.filter {
             $0.content.localizedCaseInsensitiveContains(searchQuery)
         }
-
     }
     
     var body: some View {
@@ -72,11 +68,25 @@ struct HistoryView: View {
     
     
     
+    /// Local clear. Rows stay on disk (hidden) and a timestamp marker keeps older ops
+    /// hidden if the peer replays them on a future connection.
     private func deleteMessages(from peer: String) {
         let predicate = #Predicate<Message> { msg in
-            msg.from == peer || msg.to == peer
+            (msg.from == peer || msg.to == peer) && !msg.hidden
         }
-        try? modelContext.delete(model: Message.self, where: predicate)
+        let rows = (try? modelContext.fetch(FetchDescriptor<Message>(predicate: predicate))) ?? []
+        let at = ChatCrdt.nowMs()
+        rows.forEach { $0.hidden = true }
+
+        let clearPredicate = #Predicate<ConversationClear> { $0.peer == peer }
+        if let existing = try? modelContext.fetch(FetchDescriptor<ConversationClear>(predicate: clearPredicate)) {
+            existing.forEach { $0.atMs = max($0.atMs, at) }
+            if existing.isEmpty {
+                modelContext.insert(ConversationClear(peer: peer, atMs: at))
+            }
+        } else {
+            modelContext.insert(ConversationClear(peer: peer, atMs: at))
+        }
         try? modelContext.save()
     }
 

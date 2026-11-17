@@ -18,6 +18,7 @@ This repository contains both the iOS client application and a lightweight Node.
 - **End-to-End Encryption:** Messages are encrypted before being sent over the peer-to-peer network.
 - **Decentralized Signaling:** A minimal Node.js WebSocket server is used strictly for the initial WebRTC handshake (SDP offers/answers and ICE candidates). 
 - **Local Persistence:** Chat history and contacts are saved locally on your device using **SwiftData**.
+- **CRDT Message Sync:** A conversation is an op log keyed by event id. Messages sent while peers are disconnected converge in a deterministic order when the data channel reopens; unsends are tombstones. See [CRDT.md](CRDT.md).
 - **Modern UI:** Built entirely with SwiftUI.
 
 ## Architecture

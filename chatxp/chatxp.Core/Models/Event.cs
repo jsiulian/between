@@ -90,13 +90,36 @@ public sealed class Event
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? ReplyingTo { get; init; }
 
+    /// <summary>CRDT: public key of the op's author. Older peers omit it; the receiver
+    /// defaults it to the connected peer. Omitted from JSON when null so legacy
+    /// Swift/.NET decoders see the exact event shape they already understand.</summary>
+    [JsonPropertyName("author")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Author { get; init; }
+
+    /// <summary>CRDT: author wall-clock milliseconds at creation. Older peers omit it;
+    /// the receiver defaults it to receipt time. Part of the deterministic ordering
+    /// tuple (ts, author, id).</summary>
+    [JsonPropertyName("ts")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public long? Ts { get; init; }
+
     public static string NewId() => Guid.NewGuid().ToString().ToUpperInvariant();
 
-    public static Event SendEvent(string payload, string? replyingTo = null) =>
-        new() { TypeName = EventTypeNames.Send, Payload = payload, ReplyingTo = replyingTo };
+    public static Event SendEvent(string payload, string? replyingTo = null,
+        string? author = null, long? ts = null) =>
+        new() { TypeName = EventTypeNames.Send, Payload = payload, ReplyingTo = replyingTo,
+                Author = author, Ts = ts };
 
-    public static Event DeleteEvent(string eventId) =>
-        new() { TypeName = EventTypeNames.Delete, Payload = eventId };
+    public static Event DeleteEvent(string eventId, string? author = null, long? ts = null) =>
+        new() { TypeName = EventTypeNames.Delete, Payload = eventId, Author = author, Ts = ts };
+
+    /// <summary>Rebuilds an op for anti-entropy replay. The id and metadata are preserved
+    /// so the receiving peer deduplicates by id regardless of delivery order.</summary>
+    public static Event Replay(string id, string typeName, string payload, string? replyingTo,
+        string? author, long? ts) =>
+        new() { Id = id, TypeName = typeName, Payload = payload, ReplyingTo = replyingTo,
+                Author = author, Ts = ts };
 
     public static Event TypingEvent() =>
         new() { TypeName = EventTypeNames.Typing, Payload = string.Empty };

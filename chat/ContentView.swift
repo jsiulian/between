@@ -23,7 +23,106 @@ struct ContentView: View {
             ?? peerId
             ?? "Someone"
     }
-    
+
+    /// Sends every stored op for the peer. Ids and metadata are preserved so the
+    /// receiver deduplicates and orders identically, regardless of delivery order.
+    private func replayOps(for peer: String) {
+        let me = webRTC.localClientId
+        guard !peer.isEmpty else { return }
+
+        let messagePredicate = #Predicate<Message> { msg in
+            (msg.from == peer && msg.to == me) || (msg.from == me && msg.to == peer)
+        }
+        let stored = (try? modelContext.fetch(FetchDescriptor<Message>(predicate: messagePredicate))) ?? []
+        for msg in stored {
+            // Local rows hold plaintext; re-encrypt with the static shared key so the
+            // peer can decrypt the replayed op.
+            guard let payload = encryptP2PMessage(msg.content, peerPublicKeyBase64: peer) else { continue }
+            let event = Event(id: msg.event ?? msg.id,
+                              type: .send,
+                              payload: payload,
+                              replyingTo: msg.replyingTo?.uuidString,
+                              author: msg.author ?? msg.from,
+                              ts: msg.ts ?? ChatCrdt.nowMs())
+            webRTC.send(event)
+        }
+
+        let tombPredicate = #Predicate<Tombstone> { t in
+            (t.from == peer && t.to == me) || (t.from == me && t.to == peer)
+        }
+        let tombstones = (try? modelContext.fetch(FetchDescriptor<Tombstone>(predicate: tombPredicate))) ?? []
+        for tomb in tombstones {
+            let event = Event(id: tomb.id,
+                              type: .delete,
+                              payload: tomb.targetEvent,
+                              author: tomb.author ?? tomb.from,
+                              ts: tomb.ts ?? ChatCrdt.nowMs())
+            webRTC.send(event)
+        }
+    }
+
+    /// Decodes, deduplicates and stores an incoming add. A delete may arrive first —
+    /// the stored tombstone then hides this message on insert.
+    private func handleSend(_ event: Event) {
+        let peer = webRTC.connectedTo
+        let me = webRTC.localClientId
+        let op = event.asOp(peer: peer, fallbackTs: ChatCrdt.nowMs())
+        let eventID = UUID(uuidString: op.id) ?? event.id
+
+        let duplicate = FetchDescriptor<Message>(predicate: #Predicate { $0.event == eventID })
+        if let found = try? modelContext.fetch(duplicate), !found.isEmpty { return }
+
+        guard let plaintext = decryptP2PMessage(event.payload, peerPublicKeyBase64: peer) else { return }
+        let msg = Message(content: plaintext,
+                          from: peer, to: me,
+                          event: eventID,
+                          replyingTo: event.replyingTo.flatMap { UUID(uuidString: $0) },
+                          author: op.author,
+                          ts: op.ts,
+                          hidden: isSuppressed(op: op, peer: peer))
+        modelContext.insert(msg)
+        try? modelContext.save()
+    }
+
+    /// Stores a remote unsend as a tombstone and hides the target row. Keeping the
+    /// op means a later replay cannot bring the message back.
+    private func handleDelete(_ event: Event) {
+        let peer = webRTC.connectedTo
+        let me = webRTC.localClientId
+        let op = event.asOp(peer: peer, fallbackTs: ChatCrdt.nowMs())
+
+        let duplicate = FetchDescriptor<Tombstone>(predicate: #Predicate { $0.id == event.id })
+        if let found = try? modelContext.fetch(duplicate), !found.isEmpty { return }
+
+        let tomb = Tombstone(id: event.id,
+                             targetEvent: event.payload,
+                             from: peer, to: me,
+                             author: op.author,
+                             ts: op.ts)
+        modelContext.insert(tomb)
+
+        if let target = UUID(uuidString: event.payload) {
+            let rows = try? modelContext.fetch(
+                FetchDescriptor<Message>(predicate: #Predicate { $0.event == target }))
+            rows?.forEach { $0.hidden = true }
+        }
+        try? modelContext.save()
+    }
+
+    /// Local suppression from a tombstone or a clear-history marker.
+    private func isSuppressed(op: MessageOp, peer: String) -> Bool {
+        let target = op.id
+        let tombPredicate = #Predicate<Tombstone> { $0.targetEvent == target }
+        if let found = try? modelContext.fetch(FetchDescriptor<Tombstone>(predicate: tombPredicate)),
+           !found.isEmpty { return true }
+
+        let ts = op.ts
+        let clearPredicate = #Predicate<ConversationClear> { $0.peer == peer && $0.atMs >= ts }
+        if let found = try? modelContext.fetch(FetchDescriptor<ConversationClear>(predicate: clearPredicate)),
+           !found.isEmpty { return true }
+        return false
+    }
+
     var body: some View {
         TabView(selection:$tab) {
             NavigationStack {
@@ -89,30 +188,19 @@ struct ContentView: View {
         .onAppear {
             webRTC.modelContext = modelContext
             
+            webRTC.onPeerOpened = { peer in
+                DispatchQueue.main.async { replayOps(for: peer) }
+            }
             webRTC.onMessage = { event in
                 DispatchQueue.main.async {
-                    if event.type == .send {
-                        if let decrypted = decryptP2PMessage(event.payload, peerPublicKeyBase64: webRTC.connectedTo) {
-                            let replyingTo: UUID? = event.replyingTo.flatMap { UUID(uuidString: $0) }
-                            let msg = Message(content: decrypted, from: webRTC.connectedTo, to: webRTC.localClientId, event:event.id, replyingTo:replyingTo)
-                            modelContext.insert(msg)
-                            try? modelContext.save()
-                        }
-                    } else if event.type == .delete {
-                        let targetID = UUID(uuidString:event.payload)
-                        do {
-                            try modelContext.delete(model: Message.self, where: #Predicate { object in
-                                object.event == targetID
-                            })
-                            try modelContext.save()
-                        } catch {
-                            print("Failed to delete: \(error)")
-                        }
-                    } else if event.type == .typing {
-                        isTyping = event.payload == "true"
-                    } else if event.type == .endCall {
+                    switch event.type {
+                    case .send: handleSend(event)
+                    case .delete: handleDelete(event)
+                    case .typing: isTyping = event.payload == "true"
+                    case .endCall:
                         webRTC.disconnect()
                         webRTC.connectedTo = ""
+                    default: break
                     }
                 }
             }

@@ -8,6 +8,18 @@ All 8 plan steps done. Full test suite 27/27 green. Avalonia app builds and boot
 macOS arm64. See `README.md` for run instructions and `business-requirements.md` for
 the requirements + voice-calls Todo.
 
+## CRDT offline sync (added after the port)
+
+Both clients now treat a conversation as an idempotent op log. `Event` gained optional
+`author` and `ts` fields (omitted when nil, so legacy decoders are unaffected). Each
+client replays its ops when the WebRTC data channel opens; deletes are tombstones and
+local hides/clears survive replay. See `../CRDT.md` for the design and tradeoffs.
+
+- Core: `chatxp.Core/Crdt/ChatCrdt.cs`, `chatxp.Core.Tests/CrdtTests.cs` (11 tests).
+- Swift: `chat/Crdt.swift` plus event/model/sync changes in `Data.swift`, `ContentView.swift`,
+  `ChatView.swift`, `HistoryView.swift`, `WebRTCManager.swift`, `chatApp.swift`.
+- Verified: `dotnet test` and `xcodebuild -scheme chat -sdk iphonesimulator build` pass.
+
 ## What exists
 
 | Piece | File | Proof |

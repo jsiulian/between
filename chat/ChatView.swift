@@ -42,9 +42,9 @@ struct ChatView: View {
         
         _messages = Query(filter: #Predicate<Message> { msg in
             // Condition 1: searchTarget sent it to myPubKey
-            (msg.from == searchTarget && msg.to == myPubKey) ||
+            ((msg.from == searchTarget && msg.to == myPubKey) ||
             // Condition 2: myPubKey sent it to searchTarget
-            (msg.from == myPubKey && msg.to == searchTarget)
+            (msg.from == myPubKey && msg.to == searchTarget)) && !msg.hidden
         }, sort: \Message.timestamp)
         
         _isTyping = binding
@@ -119,8 +119,9 @@ struct ChatView: View {
                       
                         
                         if let enc = encryptP2PMessage(imagePayload, peerPublicKeyBase64: searchTarget) {
-                            let event = Event(type: .send, payload: enc)
-                            let msg = Message(content: imagePayload, from: pubKey, to: searchTarget, event:event.id, replyingTo:replyingTo)
+                            let now = ChatCrdt.nowMs()
+                            let event = Event(type: .send, payload: enc, author: pubKey, ts: now)
+                            let msg = Message(content: imagePayload, from: pubKey, to: searchTarget, event:event.id, replyingTo:replyingTo, author: pubKey, ts: now)
                             modelContext.insert(msg)
                             webRTC.send(event)
                         } else {
@@ -212,12 +213,15 @@ struct ChatView: View {
                         }
                     Button() {
                         if let enc = encryptP2PMessage(text, peerPublicKeyBase64: searchTarget) {
+                            let now = ChatCrdt.nowMs()
                             let event = Event(
                                 type: .send, payload: enc,
-                                replyingTo: replyingTo?.uuidString
+                                replyingTo: replyingTo?.uuidString,
+                                author: pubKey,
+                                ts: now
                             )
                             
-                            let msg = Message(content: text, from: pubKey, to: searchTarget, event:event.id, replyingTo:replyingTo)
+                            let msg = Message(content: text, from: pubKey, to: searchTarget, event:event.id, replyingTo:replyingTo, author: pubKey, ts: now)
                             modelContext.insert(msg)
                             
                             webRTC.send(event)
@@ -352,11 +356,19 @@ struct MessageRowView: View {
             if msg.from == webRTC.localClientId {
                 if webRTC.isPeerConnected {
                     Button("Unsend") {
+                        let now = ChatCrdt.nowMs()
                         let event = Event(
                             type:.delete,
-                            payload: msg.event?.uuidString ?? ""
+                            payload: msg.event?.uuidString ?? "",
+                            author: webRTC.localClientId,
+                            ts: now
                         )
-                        
+                        modelContext.insert(Tombstone(id: event.id,
+                                                      targetEvent: event.payload,
+                                                      from: webRTC.localClientId,
+                                                      to: searchTarget,
+                                                      author: webRTC.localClientId,
+                                                      ts: now))
                         webRTC.send(event)
                         
                         do {
@@ -369,8 +381,8 @@ struct MessageRowView: View {
                 }
             }
             Button("Delete for You") {
+                msg.hidden = true
                 do {
-                    modelContext.delete(msg)
                     try modelContext.save()
                 } catch {
                     print("Failed to delete: \(error)")

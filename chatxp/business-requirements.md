@@ -65,6 +65,18 @@ the two devices' identity keys; the signaling server cannot decrypt anything.
 - FR-4.6 Images: payload prefixed with `B64__IMAGE:` carries a Base64 image
   (encrypted like any payload).
 
+### FR-4B CRDT convergence (offline sync)
+- FR-4B.1 Each wire event is an immutable op keyed by its event id. `send` adds an encrypted
+  payload; `delete` is a tombstone naming the target op. Merge is set union and is idempotent.
+- FR-4B.2 On data-channel open, each peer replays its stored ops for that peer. Delivery order
+  does not affect the result: duplicates are dropped and a delete that arrives before its add
+  still hides it.
+- FR-4B.3 Visible messages are ordered by the deterministic tuple `(ts, author, id)` carried as
+  optional `author` and `ts` fields on `Event`. Events from legacy peers omit them and receive
+  defaults from the connection, preserving iOS/.NET wire compatibility.
+- FR-4B.4 Delete-for-you and clear-history are local-only: hidden flags and a per-peer clear
+  marker keep a later replay from resurrecting them.
+
 ### FR-5 Local persistence
 - FR-5.1 Messages (encrypted content, from/to identities, timestamp, event id,
   reply reference) persist locally in SQLite.

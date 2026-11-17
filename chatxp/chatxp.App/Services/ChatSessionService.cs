@@ -54,6 +54,7 @@ public sealed class ChatSessionService : IDisposable
         WebRtc = new WebRtcManager(Crypto.Base64PublicKey, new SignalingClient(), Log);
         WebRtc.SetSignalingServer(SignalingServer);
         WebRtc.OnMessage += HandleIncomingEvent;
+        WebRtc.OnPeerOpened += ReplayOpsForPeer;
 
         Log.Info($"chatxp starting — id {WebRtcLocalPeerId()}…");
         Log.Info($"Signaling server: {SignalingServer}");
@@ -131,25 +132,41 @@ public sealed class ChatSessionService : IDisposable
         var ciphertext = Crypto.Encrypt(plaintext, ConnectedPeerId);
         if (ciphertext is null) return null;
 
-        var evt = Event.SendEvent(ciphertext, replyingTo);
+        var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        var evt = Event.SendEvent(ciphertext, replyingTo, Crypto.Base64PublicKey, now);
         WebRtc.Send(evt);
 
         // Store our own outgoing message (encrypted content, like SwiftData in the app).
         var message = new chatxp.core.Storage.Message(
             Guid.NewGuid().ToString(), ciphertext, Crypto.Base64PublicKey,
-            ConnectedPeerId, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
-            evt.Id, replyingTo);
+            ConnectedPeerId, now, evt.Id, replyingTo, Crypto.Base64PublicKey, now);
         Database.AddMessage(message);
         return (evt, message.Id);
     }
 
-    /// <summary>Requests deletion of a message on both sides (delete Event).</summary>
+    /// <summary>Requests deletion of a message on both sides. The tombstone is kept
+    /// locally so a later replay cannot bring the message back.</summary>
     public void DeleteMessage(string eventId, string localMessageId)
     {
-        if (ConnectedPeerId is not null)
-            WebRtc.Send(Event.DeleteEvent(eventId));
-        Database.DeleteMessage(localMessageId);
+        var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        var evt = Event.DeleteEvent(eventId, Crypto.Base64PublicKey, now);
+        var row = Database.GetMessageByEventId(eventId);
+        var peer = row is null
+            ? ConnectedPeerId ?? string.Empty
+            : row.From == Crypto.Base64PublicKey ? row.To : row.From;
+
+        if (ConnectedPeerId is not null) WebRtc.Send(evt);
+        Database.AddTombstone(new Tombstone(evt.Id, eventId,
+            Crypto.Base64PublicKey, peer, Crypto.Base64PublicKey, now));
+        Database.HideMessage(localMessageId);
     }
+
+    /// <summary>Local-only delete: hides the message but keeps the op for replay safety.</summary>
+    public void DeleteForYou(string localMessageId) => Database.HideMessage(localMessageId);
+
+    /// <summary>Local-only clear: hidden rows stay hidden when old ops arrive on replay.</summary>
+    public void ClearConversation(string peerId) =>
+        Database.ClearConversation(Crypto.Base64PublicKey, peerId);
 
     /// <summary>Initiates a connection to a peer id (Connect flow).</summary>
     public Task ConnectToPeerAsync(string peerId) =>
@@ -160,6 +177,19 @@ public sealed class ChatSessionService : IDisposable
     /// </summary>
     public string? DecryptFor(string encryptedContent, string counterpartId) =>
         Crypto.Decrypt(encryptedContent, counterpartId);
+
+    /// <summary>Sends every local op for the peer when the channel opens. Replay uses the
+    /// original event ids, so both peers converge even if messages were sent while apart.</summary>
+    private void ReplayOpsForPeer(string peer)
+    {
+        if (string.IsNullOrEmpty(peer)) peer = ConnectedPeerId ?? string.Empty;
+        if (string.IsNullOrEmpty(peer)) return;
+
+        var ops = Database.GetOpsForPeer(Crypto.Base64PublicKey, peer);
+        foreach (var op in ops)
+            WebRtc.Send(ChatCrdt.ToEvent(op));
+        Log.Info($"CRDT replay: {ops.Count} op(s) sent to {peer[..8]}…");
+    }
 
     private void HandleIncomingEvent(Event evt)
     {
@@ -172,24 +202,29 @@ public sealed class ChatSessionService : IDisposable
         switch (evt.Type)
         {
             case EventTypes.Send:
+            case EventTypes.Delete:
             {
-                var plaintext = Crypto.Decrypt(evt.Payload, peer);
-                if (plaintext is null) return; // tampered — drop (FR-4.2)
-                var message = new chatxp.core.Storage.Message(
-                    Guid.NewGuid().ToString(), evt.Payload, peer,
-                    Crypto.Base64PublicKey, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
-                    evt.Id, evt.ReplyingTo);
-                Database.AddMessage(message);
-                MessageReceived?.Invoke((message, plaintext));
+                if (Database.HasEvent(evt.Id)) return; // idempotent merge
+                var op = ChatCrdt.FromEvent(evt, peer, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+                if (op.Kind == OpKind.Send)
+                {
+                    var plaintext = Crypto.Decrypt(evt.Payload, peer);
+                    if (plaintext is null) return; // tampered — drop (FR-4.2)
+                    var message = new chatxp.core.Storage.Message(
+                        Guid.NewGuid().ToString(), evt.Payload, peer,
+                        Crypto.Base64PublicKey, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+                        evt.Id, evt.ReplyingTo, op.Author, op.TsMs);
+                    Database.AddMessage(message);
+                    MessageReceived?.Invoke((message, plaintext));
+                }
+                else
+                {
+                    Database.AddTombstone(new Tombstone(evt.Id, evt.Payload,
+                        peer, Crypto.Base64PublicKey, op.Author, op.TsMs));
+                    MessageDeleted?.Invoke(evt.Payload);
+                }
                 break;
             }
-            case EventTypes.Delete:
-                // Payload carries the remote event id; find the local row by it.
-                var row = Database.GetConversation(Crypto.Base64PublicKey, peer)
-                    .FirstOrDefault(m => m.EventId == evt.Payload);
-                if (row is not null) Database.DeleteMessage(row.Id);
-                MessageDeleted?.Invoke(evt.Payload);
-                break;
             case EventTypes.Typing:
                 PeerTyping?.Invoke();
                 break;

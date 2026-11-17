@@ -81,6 +81,10 @@ final class WebRTCManager: NSObject, ObservableObject {
     /// they're consumed internally over the signaling socket.
     var onMessage: ((Event) -> Void)?
 
+    /// Fired once when the data channel opens. The app replies by replaying its CRDT
+    /// op log for that peer — the entire sync trigger, with no server involvement.
+    var onPeerOpened: ((String) -> Void)?
+
     @Published var showConnectionAlert = false
     @Published var incomingConnectionPeerId: String? = nil
     @Published var incomingConnectionType: String = "Text"
@@ -555,6 +559,7 @@ extension WebRTCManager: RTCDataChannelDelegate {
             let queued = pendingEvents
             pendingEvents.removeAll()
             queued.forEach { send($0) }
+            onPeerOpened?(connectedTo)
         }
     }
 

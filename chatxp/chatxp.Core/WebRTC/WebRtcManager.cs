@@ -66,6 +66,10 @@ public sealed class WebRtcManager : IAsyncDisposable
     /// still need handling by the app via E2eeCrypto). Background thread.</summary>
     public event Action<Event>? OnMessage;
 
+    /// <summary>Raised once the data channel opens. The app replies by replaying its
+    /// CRDT ops for that peer; this is the whole sync trigger.</summary>
+    public event Action<string>? OnPeerOpened;
+
     /// <summary>Raised with the state name ("connecting", "connected", "failed",
     /// "disconnected", "closed", "not_found", "rejected", "timeout").</summary>
     public event Action<string>? OnConnectionStateChanged;
@@ -343,6 +347,9 @@ public sealed class WebRtcManager : IAsyncDisposable
             }
             foreach (var evt in queued)
                 Send(evt);
+            // Anti-entropy: let the app replay its op log for this peer. Ops carry their
+            // original ids, so the receiver deduplicates regardless of delivery order.
+            OnPeerOpened?.Invoke(_targetId ?? string.Empty);
         };
         channel.onmessage += (dc, protocol, data) =>
         {
