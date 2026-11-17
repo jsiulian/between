@@ -91,7 +91,7 @@ extension Event {
                   payload: payload,
                   replyingTo: replyingTo,
                   peer: peer,
-                  seq: seq ?? ts ?? fallbackTs)
+                  seq: seq ?? 0)
     }
 }
 

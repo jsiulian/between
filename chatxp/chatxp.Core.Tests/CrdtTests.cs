@@ -143,6 +143,27 @@ public class CrdtTests
     }
 
     [Fact]
+    public void LegacyReplay_StaysHiddenUnderWallClockClearMarker()
+    {
+        using var db = FreshDb(out _);
+        var oldTs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - 60_000;
+        db.AddMessage(new Message("m1", "cipher", Peer, Me, oldTs, "E1", null, Peer, oldTs));
+
+        // A marker written before seq existed holds only at_ms. A legacy op must
+        // still be judged by the wall clock when it is replayed after an upgrade.
+        db.ClearConversation(Me, Peer);
+
+        var stored = db.GetOpsForPeer(Me, Peer).Single();
+        Assert.Equal(0, stored.Seq);
+        var evt = ChatCrdt.ToEvent(stored);
+        var replayed = ChatCrdt.FromEvent(evt, Peer, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+        Assert.Equal(0, replayed.Seq);
+
+        db.AddMessage(FromOp(replayed, Me));
+        Assert.Empty(db.GetConversation(Me, Peer));
+    }
+
+    [Fact]
     public void ClearMarker_UsesSequenceNotWallClock()
     {
         using var db = FreshDb(out _);

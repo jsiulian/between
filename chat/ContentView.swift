@@ -44,7 +44,7 @@ struct ContentView: View {
                               replyingTo: msg.replyingTo?.uuidString,
                               author: msg.author ?? msg.from,
                               ts: msg.ts ?? ChatCrdt.nowMs(),
-                               seq: msg.seq > 0 ? msg.seq : (msg.ts ?? ChatCrdt.nowMs()))
+                               seq: msg.seq)
             webRTC.send(event)
         }
 
@@ -58,7 +58,7 @@ struct ContentView: View {
                               payload: tomb.targetEvent,
                               author: tomb.author ?? tomb.from,
                               ts: tomb.ts ?? ChatCrdt.nowMs(),
-                               seq: tomb.seq > 0 ? tomb.seq : (tomb.ts ?? ChatCrdt.nowMs()))
+                               seq: tomb.seq)
             webRTC.send(event)
         }
     }

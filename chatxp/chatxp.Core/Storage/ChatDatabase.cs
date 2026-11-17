@@ -148,14 +148,14 @@ public sealed class ChatDatabase : IDisposable
             ("self_id", "ALTER TABLE conversation_clears ADD COLUMN self_id TEXT;"),
         });
 
-        // Legacy rows have no metadata: derive author/ts/seq from the fields we do have.
+        // Legacy rows have no metadata: derive author/ts from the fields we do have.
+        // seq stays 0 so old clear markers still hide these ops through the at_ms
+        // fallback; giving them a timestamp-sized seq would bypass that marker.
         using (var backfill = _connection.CreateCommand())
         {
             backfill.CommandText = """
                 UPDATE messages SET author = from_id WHERE author IS NULL;
                 UPDATE messages SET ts_ms = timestamp_ms WHERE ts_ms = 0;
-                UPDATE messages SET seq = ts_ms WHERE seq = 0;
-                UPDATE tombstones SET seq = ts_ms WHERE seq = 0;
                 DELETE FROM messages WHERE event_id IS NOT NULL AND rowid NOT IN (
                     SELECT MIN(rowid) FROM messages WHERE event_id IS NOT NULL GROUP BY event_id);
                 CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_event ON messages(event_id);
@@ -203,10 +203,8 @@ public sealed class ChatDatabase : IDisposable
     {
         var ts = message.TsMs != 0 ? message.TsMs : message.TimestampUnixMs;
         var author = message.Author ?? message.From;
-        var suppliedSeq = message.Seq;
-        var storedSeq = suppliedSeq != 0 ? suppliedSeq : ts;
         var hidden = message.Hidden
-            || IsSuppressed(message.EventId, ts, suppliedSeq, author, message.From, message.To);
+            || IsSuppressed(message.EventId, ts, message.Seq, author, message.From, message.To);
 
         using var cmd = _connection.CreateCommand();
         cmd.CommandText = """
@@ -224,7 +222,7 @@ public sealed class ChatDatabase : IDisposable
         cmd.Parameters.AddWithValue("$author", author);
         cmd.Parameters.AddWithValue("$opTs", ts);
         cmd.Parameters.AddWithValue("$hidden", hidden ? 1 : 0);
-        cmd.Parameters.AddWithValue("$seq", storedSeq);
+        cmd.Parameters.AddWithValue("$seq", message.Seq);
         cmd.ExecuteNonQuery();
     }
 
@@ -505,7 +503,7 @@ public sealed class ChatDatabase : IDisposable
         cmd.Parameters.AddWithValue("$to", tombstone.To);
         cmd.Parameters.AddWithValue("$author", (object?)tombstone.Author ?? DBNull.Value);
         cmd.Parameters.AddWithValue("$ts", tombstone.TsMs);
-        cmd.Parameters.AddWithValue("$seq", tombstone.Seq != 0 ? tombstone.Seq : tombstone.TsMs);
+        cmd.Parameters.AddWithValue("$seq", tombstone.Seq);
         cmd.ExecuteNonQuery();
 
         using var hide = _connection.CreateCommand();

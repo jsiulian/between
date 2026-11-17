@@ -54,7 +54,7 @@ public static class ChatCrdt
         evt.Payload,
         evt.ReplyingTo,
         peerId,
-        evt.Seq ?? (evt.Ts ?? fallbackTsMs));
+        evt.Seq ?? 0);
 
     public static Event ToEvent(MessageOp op) => Event.Replay(
         op.Id, op.WireType, op.Payload, op.ReplyingTo, op.Author, op.TsMs, op.Seq);
