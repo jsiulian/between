@@ -10,7 +10,8 @@ namespace chatxp.core;
 /// Flow mirrored from the Swift original:
 ///   - Local id = our public key identity (the CryptoKit rawRepresentation Base64).
 ///   - connect(to): fresh RTCPeerConnection + "events" data channel (ordered), create offer,
-///     setLocalDescription, send offer over signaling. 15s timeout while connecting.
+///     setLocalDescription, send offer over signaling. Initiator window: 60s (includes
+///     the recipient accepting the prompt); recipient window after Accept: 15s.
 ///   - Incoming offer: exposed via OnIncomingConnection (app decides accept/reject; the
 ///     manager auto-rejects by sending "reject" only for blocked peers — caller checks).
 ///   - Answer: setRemoteDescription(offer), createAnswer, send answer.
@@ -25,7 +26,16 @@ public sealed class WebRtcManager : IAsyncDisposable
     /// <summary>STUN server, mirrors WebRTCManager.swift (iceServers field).</summary>
     private const string StunServer = "stun:stun.l.google.com:19302";
     private const string DataChannelLabel = "events";
-    private static readonly TimeSpan ConnectTimeout = TimeSpan.FromSeconds(60);
+
+    /// <summary>Initiator timeout: starts when the LOCAL user clicks Connect and
+    /// covers the remote user noticing and accepting the prompt PLUS the live
+    /// handshake. Human reaction time is part of this window, so it is generous.</summary>
+    private static readonly TimeSpan InitiatorTimeout = TimeSpan.FromSeconds(60);
+
+    /// <summary>Recipient timeout: starts when the user clicks ACCEPT, at which point
+    /// both sides are actively engaged — so this only needs to cover the handshake
+    /// itself (ICE + DTLS + SCTP; normally 1–3s).</summary>
+    private static readonly TimeSpan HandshakeTimeout = TimeSpan.FromSeconds(15);
 
     private readonly SignalingClient _signaling;
     private readonly ILog _log;
@@ -96,7 +106,7 @@ public sealed class WebRtcManager : IAsyncDisposable
 
     /// <summary>
     /// Initiates a P2P connection to userId. Mirrors connect(toUserId:): fresh connection
-    /// state, offer, 15s timeout.
+    /// state, offer, 60s initiator window (covers the recipient's human reaction time).
     /// </summary>
     public async Task ConnectToAsync(string userId, CancellationToken cancellationToken = default)
     {
@@ -127,11 +137,13 @@ public sealed class WebRtcManager : IAsyncDisposable
             DataChannelLabel, new RTCDataChannelInit { ordered = true }).ConfigureAwait(false);
         HookDataChannel(_dataChannel);
 
-        _log.Info("Offer sent, waiting for answer (15s timeout)…");
+        _log.Info("Offer sent, waiting for the peer to accept + handshake (60s window)…");
 
-        // 15s timeout (Swift uses DispatchQueue.asyncAfter +5s/15s; fail → handleConnectionFailed).
+        // Initiator window: must include the RECIPIENT'S human reaction time (them
+        // noticing and accepting the prompt), not just network handshake time.
+        // Swift used 15s, which failed whenever the callee took longer to click Accept.
         _connectTimeoutCts = new CancellationTokenSource();
-        _ = Task.Delay(ConnectTimeout, _connectTimeoutCts.Token).ContinueWith(t =>
+        _ = Task.Delay(InitiatorTimeout, _connectTimeoutCts.Token).ContinueWith(t =>
         {
             if (!t.IsCanceled && !IsPeerConnected)
                 HandleConnectionFailed("Connection attempt timed out");
@@ -164,13 +176,14 @@ public sealed class WebRtcManager : IAsyncDisposable
         _log.Info($"Accepting incoming connection from {ShortId(fromId)}…");
         OnConnectionStateChanged?.Invoke("connecting");
 
-        // Same 15s timeout as the outbound flow: if ICE never completes after we
-        // accept, the user gets a failure (and diagnostics), not a silent hang.
+        // Recipient window: handshake-only (both sides engaged the moment Accept was
+		// clicked), so a shorter deadline. A stuck ICE pair fails fast with details
+        // in the diagnostics log instead of hanging silently.
         _connectTimeoutCts = new CancellationTokenSource();
-        _ = Task.Delay(ConnectTimeout, _connectTimeoutCts.Token).ContinueWith(t =>
+        _ = Task.Delay(HandshakeTimeout, _connectTimeoutCts.Token).ContinueWith(t =>
         {
             if (!t.IsCanceled && !IsPeerConnected)
-                HandleConnectionFailed("Connection attempt timed out");
+                HandleConnectionFailed("Handshake timed out after accepting");
         }, TaskScheduler.Default);
 
         try
@@ -215,7 +228,7 @@ public sealed class WebRtcManager : IAsyncDisposable
             _log.Error("Accept aborted: failed to send answer over signaling", ex);
             HandleConnectionFailed("Answer could not be delivered");
         }
-        _log.Info("Answer sent, waiting for peer to connect (15s timeout)…");
+        _log.Info("Answer sent, waiting for peer to connect (15s handshake window)…");
     }
 
     /// <summary>Rejects a pending incoming connection (mirrors the reject alert action).</summary>
