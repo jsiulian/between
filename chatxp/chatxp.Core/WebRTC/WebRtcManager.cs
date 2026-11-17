@@ -281,6 +281,11 @@ public sealed class WebRtcManager : IAsyncDisposable
             {
                 new() { urls = StunServer },
             },
+            // Needed for Tailscale/VPN overlays: SIPSorcery excludes non-standard
+            // interfaces (utun 100.x Tailnet addresses) by default, so peers that can
+            // ONLY reach each other over such an overlay would have no routable ICE
+            // candidates and the handshake would time out. Verified empirically.
+            X_ICEIncludeAllInterfaceAddresses = true,
         };
         var pc = new RTCPeerConnection(config);
 
