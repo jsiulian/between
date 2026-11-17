@@ -39,8 +39,8 @@ This repository contains both the iOS client application and a lightweight Node.
 
 ## Public Signaling Server
 
-By default, the iOS app connects to a small public signaling server hosted on an Oracle Cloud Infrastructure (OCI) instance at `ws://150.230.37.157:3030/`. 
-This allows you to test the app immediately without needing to run your own server. Because the signaling server only facilitates the initial peer discovery handshake and does not see or store any of the encrypted chat messages, it is completely secure to use this public instance. However, you can also run your own local signaling server if you prefer, as described below.
+By default, the iOS app connects to a small public signaling server hosted on an Oracle Cloud Infrastructure (OCI) instance at `wss://150.230.37.157:3030/`.
+The server only facilitates the initial handshake and never sees or stores chat messages. It does handle your identity, SDP, and ICE candidates, so transport encryption matters. The public instance must present a certificate your device trusts. If it does not, run your own server with TLS as described below and change the URL in the app.
 
 ## Getting Started
 
@@ -54,7 +54,13 @@ npm install
 npm start
 ```
 
-The signaling server will start listening on `ws://0.0.0.0:3030`. 
+The signaling server starts on `0.0.0.0:3030` and speaks `ws://` until you give it a certificate. To serve `wss://`, set both TLS paths:
+
+```bash
+TLS_CERT=/path/to/server.crt TLS_KEY=/path/to/server.key npm start
+```
+
+Run `sh generate-cert.sh` to create a self-signed pair for local testing. Clients must trust that certificate before they can connect.
 
 > **Note:** For physical iOS devices to connect, ensure your iPhone is on the same local network as your Mac, and configure the app to connect to your Mac's local IP address (e.g., `192.168.1.x`) rather than `localhost`.
 

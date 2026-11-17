@@ -1,3 +1,4 @@
+using System.Net.WebSockets;
 using System.Text.Json;
 using SIPSorcery.Net;
 
@@ -273,31 +274,28 @@ public sealed class WebRtcManager : IAsyncDisposable
 
     // ---------------------------------------------------------------- private
 
+    /// <summary>ICE settings for every peer connection. Internal so tests can lock in
+    /// the interface rule that makes Tailnet addresses usable as candidates.</summary>
+    internal static RTCConfiguration CreateIceConfiguration() => new()
+    {
+        iceServers = new List<RTCIceServer>
+        {
+            new() { urls = StunServer },
+        },
+        // SIPSorcery otherwise gathers only from the default-route interface. That
+        // leaves out a Tailscale utun 100.x address and gives two tailnet peers no
+        // candidate pair. Verified empirically.
+        X_ICEIncludeAllInterfaceAddresses = true,
+    };
+
     private RTCPeerConnection CreatePeerConnection()
     {
-        var config = new RTCConfiguration
-        {
-            iceServers = new List<RTCIceServer>
-            {
-                new() { urls = StunServer },
-            },
-            // Needed for Tailscale/VPN overlays: SIPSorcery excludes non-standard
-            // interfaces (utun 100.x Tailnet addresses) by default, so peers that can
-            // ONLY reach each other over such an overlay would have no routable ICE
-            // candidates and the handshake would time out. Verified empirically.
-            X_ICEIncludeAllInterfaceAddresses = true,
-        };
-        var pc = new RTCPeerConnection(config);
+        var pc = new RTCPeerConnection(CreateIceConfiguration());
 
         pc.onicecandidate += candidate =>
         {
-            if (_targetId is not null && candidate is not null)
-            {
-                _ = _signaling.SendAsync(SignalingMessage.Candidate(
-                    LocalId, _targetId,
-                    candidate.candidate, candidate.sdpMid ?? "0",
-                    candidate.sdpMLineIndex));
-            }
+            if (candidate is null || IsPeerConnected || _targetId is null) return;
+            _ = ForwardCandidateAsync(candidate, _targetId);
         };
 
         pc.onconnectionstatechange += state =>
@@ -333,6 +331,9 @@ public sealed class WebRtcManager : IAsyncDisposable
         channel.onopen += () =>
         {
             HandlePeerBecameReachable();
+            // The data channel is open, so ICE cannot fail the handshake now. Dropping
+            // signaling here avoids cutting it off on an early ICE "connected" event.
+            _ = _signaling.CloseSocketAsync();
             // Flush the queue of Events that piled up while connecting (mirrors Swift).
             Event[] queued;
             lock (_stateLock)
@@ -373,8 +374,6 @@ public sealed class WebRtcManager : IAsyncDisposable
             _isPeerConnected = true;
         }
         CancelConnectTimeout();
-        // The P2P path is live — drop the signaling server (mirrors closeSignalingSocket()).
-        _ = _signaling.CloseSocketAsync();
         OnConnectionStateChanged?.Invoke("connected");
     }
 
@@ -421,6 +420,10 @@ public sealed class WebRtcManager : IAsyncDisposable
                 break;
 
             case "not_found":
+                // A peer drops signaling as soon as its data channel opens. A candidate
+                // still in flight then gets not_found from the relay. That says nothing
+                // about a live P2P path, so ignore it there and with no pending target.
+                if (IsPeerConnected || _targetId is null) break;
                 HandleConnectionFailed("User not found on signaling server");
                 break;
 
@@ -452,6 +455,24 @@ public sealed class WebRtcManager : IAsyncDisposable
                     _pendingRemoteCandidates.Add(candidate);
                 break;
             }
+        }
+    }
+
+    /// <summary>Best-effort trickle. The peer can close its signaling socket between
+    /// candidate generation and send, so a failed send is logged, not thrown.</summary>
+    private async Task ForwardCandidateAsync(RTCIceCandidate candidate, string targetId)
+    {
+        try
+        {
+            await _signaling.SendAsync(SignalingMessage.Candidate(
+                LocalId, targetId, candidate.candidate,
+                candidate.sdpMid ?? "0", candidate.sdpMLineIndex)).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is InvalidOperationException
+                                      or WebSocketException
+                                      or ObjectDisposedException)
+        {
+            _log.Error("Could not forward ICE candidate", ex);
         }
     }
 

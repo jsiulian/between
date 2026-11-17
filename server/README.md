@@ -33,9 +33,18 @@ Start the server:
 npm start [port]
 ```
 
-The server will start listening on all network interfaces (`0.0.0.0`) on port **3030**. 
-The HTTP health check is available at `http://localhost:3030/`.
-WebSocket connections should be made to `ws://localhost:3030/`.
+The server will start listening on all network interfaces (`0.0.0.0`) on port **3030**.
+Without TLS, the health check is at `http://localhost:3030/` and WebSocket clients use
+`ws://localhost:3030/`. With TLS enabled, use `https://` and `wss://` for the same paths.
+
+To serve `wss://`, set both certificate paths:
+
+```bash
+TLS_CERT=/path/to/server.crt TLS_KEY=/path/to/server.key npm start
+```
+
+`sh generate-cert.sh` creates a self-signed pair for local testing. Clients must trust
+that certificate before `wss://` connections succeed. Set both variables or neither.
 
 ## Protocol
 

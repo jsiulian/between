@@ -51,9 +51,11 @@ cd ../server && npm install && npm start 3000
 dotnet run --project chatxp.App
 ```
 
-The app registers on `ws://150.230.37.157:3030/` by default. Change the server in the
+The app registers on `wss://150.230.37.157:3030/` by default. Change the server in the
 app: **Connect tab → Signaling server → Apply** (persisted across restarts), or set the
-`CHATXP_SIGNAL_SERVER` environment variable (env overrides the saved setting).
+`CHATXP_SIGNAL_SERVER` environment variable (env overrides the saved setting). A `wss://`
+URL needs a server with a certificate the client trusts. Set `TLS_CERT` and `TLS_KEY`
+when starting `server/index.js` to serve one.
 
 Two copies of the app (or one copy + the iOS app) can chat by exchanging their IDs
 (the Base64 public key shown in the header; click to copy) out of band.

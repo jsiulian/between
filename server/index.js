@@ -1,12 +1,23 @@
 const WebSocket = require('ws');
 const http = require('http');
-
-const server = http.createServer();
+const https = require('https');
+const fs = require('fs');
 
 const port = process.argv[2] || 3030;
-const wss = new WebSocket.Server({ server });
-
 const LOG = process.argv.includes('--log');
+
+const tlsCert = process.env.TLS_CERT;
+const tlsKey = process.env.TLS_KEY;
+if (Boolean(tlsCert) !== Boolean(tlsKey)) {
+  console.error('Set both TLS_CERT and TLS_KEY, or neither.');
+  process.exit(1);
+}
+const useTls = Boolean(tlsCert && tlsKey);
+const server = useTls
+  ? https.createServer({ cert: fs.readFileSync(tlsCert), key: fs.readFileSync(tlsKey) })
+  : http.createServer();
+
+const wss = new WebSocket.Server({ server });
 
 const clients = new Map();
 
@@ -82,7 +93,7 @@ wss.on('connection', (ws) => {
 
 
 server.listen(port, "0.0.0.0", () => {
-  console.log(`Signaling server listening on :${port}`);
+  console.log(`Signaling server listening on :${port} (${useTls ? 'wss' : 'ws'})`);
 });
 
 const interval = setInterval(() => {

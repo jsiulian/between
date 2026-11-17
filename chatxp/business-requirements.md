@@ -34,7 +34,7 @@ the two devices' identity keys; the signaling server cannot decrypt anything.
 
 ### FR-2 Signaling
 - FR-2.1 The app connects to a user-configurable signaling server (WebSocket,
-  default `ws://150.230.37.157:3030/`) and registers its identity.
+  default `wss://150.230.37.157:3030/`) and registers its identity.
 - FR-2.2 The app interoperates with the existing Node.js signaling server
   (`server/index.js`): register, offer/answer/candidate forwarding by target id,
   `not_found` replies, `reject` propagation. **The server is not ported** — it is

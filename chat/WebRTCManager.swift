@@ -398,7 +398,11 @@ final class WebRTCManager: NSObject, ObservableObject {
             }
 
         case "not_found":
-            DispatchQueue.main.async {
+            // A peer drops signaling once its data channel opens. A candidate still in
+            // flight then gets not_found from the relay. Ignore that when a P2P path is
+            // live or when no connection attempt is pending.
+            DispatchQueue.main.async { [weak self] in
+                guard let self = self, !self.isPeerConnected, self.targetClientId != nil else { return }
                 self.handleConnectionFailed(reason: "User not found on signaling server")
             }
 
@@ -463,13 +467,13 @@ final class WebRTCManager: NSObject, ObservableObject {
         }
     }
 
-    /// Called the moment we detect a live P2P path - drops the signaling server.
+    /// Marks the P2P path live. Signaling is dropped when the data channel opens,
+    /// not on an early ICE "connected" event.
     private func handlePeerBecameReachable() {
         guard !isPeerConnected else { return }
         DispatchQueue.main.async {
             self.isPeerConnected = true
         }
-        closeSignalingSocket()
         delegate?.webRTCManagerDidConnectPeer(self)
     }
 }
@@ -517,7 +521,7 @@ extension WebRTCManager: RTCPeerConnectionDelegate {
     func peerConnection(_ peerConnection: RTCPeerConnection, didChange newState: RTCIceGatheringState) {}
 
     func peerConnection(_ peerConnection: RTCPeerConnection, didGenerate candidate: RTCIceCandidate) {
-        guard let targetClientId = targetClientId else { return }
+        guard !isPeerConnected, let targetClientId = targetClientId else { return }
         sendSignaling(SignalingMessage(
             type: "candidate",
             from: localClientId,
@@ -546,6 +550,7 @@ extension WebRTCManager: RTCDataChannelDelegate {
         
         if dataChannel.readyState == .open {
             handlePeerBecameReachable()
+            closeSignalingSocket()
             
             let queued = pendingEvents
             pendingEvents.removeAll()

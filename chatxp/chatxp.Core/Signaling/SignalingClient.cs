@@ -67,7 +67,7 @@ public sealed class SignalingMessage
 /// </summary>
 public sealed class SignalingClient : IAsyncDisposable
 {
-    public const string DefaultServer = "ws://150.230.37.157:3030/";
+    public const string DefaultServer = "wss://150.230.37.157:3030/";
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
