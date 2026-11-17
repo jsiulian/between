@@ -31,6 +31,8 @@ for ARCH in "${ARCHS[@]}"; do
     APP_NAME="chatxp.app"
     DMG_NAME="chatxp-macos-$ARCH.dmg"
 
+    ICON_SOURCE="chatxp.App/Assets/chatxp.icns"
+
     echo "==> [$ARCH] dotnet publish -r $RID (self-contained)"
     dotnet publish chatxp.App/chatxp.App.csproj -c "$CONFIG" -r "$RID" --self-contained true
 
@@ -40,7 +42,9 @@ for ARCH in "${ARCHS[@]}"; do
     mkdir -p "$STAGE/$APP_NAME/Contents/MacOS" "$STAGE/$APP_NAME/Contents/Resources"
 
     cp -R "$PUBLISH_DIR/." "$STAGE/$APP_NAME/Contents/MacOS/"
-    cp "$PACKAGING_DIR/chatxp.icns" "$STAGE/$APP_NAME/Contents/Resources/chatxp.icns"
+    # Icon lives with the project assets (single source of truth; also drives the
+    # window icon via chatxp.ico in the same folder).
+    cp "$ICON_SOURCE" "$STAGE/$APP_NAME/Contents/Resources/chatxp.icns"
     cp "$PACKAGING_DIR/Info.plist" "$STAGE/$APP_NAME/Contents/Info.plist"
 
     echo "==> [$ARCH] codesign"

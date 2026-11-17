@@ -9,6 +9,7 @@
         x:Class="chatxp.App.Views.MainWindow"
         x:DataType="vm:MainViewModel"
         Title="chatxp — Between, cross-platform"
+        Icon="avares://chatxp.App/Assets/chatxp.ico"
         Width="720" Height="600">
 
     <Design.DataContext>
