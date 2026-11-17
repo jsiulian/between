@@ -25,9 +25,10 @@ public sealed class WebRtcManager : IAsyncDisposable
     /// <summary>STUN server, mirrors WebRTCManager.swift (iceServers field).</summary>
     private const string StunServer = "stun:stun.l.google.com:19302";
     private const string DataChannelLabel = "events";
-    private static readonly TimeSpan ConnectTimeout = TimeSpan.FromSeconds(15);
+    private static readonly TimeSpan ConnectTimeout = TimeSpan.FromSeconds(60);
 
     private readonly SignalingClient _signaling;
+    private readonly ILog _log;
     private RTCPeerConnection? _peerConnection;
     private RTCDataChannel? _dataChannel;
     private string? _targetId;
@@ -65,10 +66,11 @@ public sealed class WebRtcManager : IAsyncDisposable
     /// <summary>The connection failed / was rejected / the peer went away.</summary>
     public event Action<string>? OnDisconnected;
 
-    public WebRtcManager(string localId, SignalingClient signaling)
+    public WebRtcManager(string localId, SignalingClient signaling, ILog? log = null)
     {
         LocalId = localId;
         _signaling = signaling;
+        _log = log ?? NullLog.Instance;
         _signaling.OnMessage += HandleSignaling;
     }
 
@@ -105,14 +107,27 @@ public sealed class WebRtcManager : IAsyncDisposable
             _targetId = userId;
         }
 
+        _log.Info($"Connecting to peer {ShortId(userId)}…");
         OnConnectionStateChanged?.Invoke("connecting");
 
-        await RegisterAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            await RegisterAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            _log.Error($"Connect aborted: signaling registration to " +
+                       $"{_signaling.ServerUri} failed", ex);
+            HandleConnectionFailed("Signaling server unreachable");
+            return;
+        }
 
         _peerConnection = CreatePeerConnection();
         _dataChannel = await _peerConnection.createDataChannel(
             DataChannelLabel, new RTCDataChannelInit { ordered = true }).ConfigureAwait(false);
         HookDataChannel(_dataChannel);
+
+        _log.Info("Offer sent, waiting for answer (60s timeout)…");
 
         // 15s timeout (Swift uses DispatchQueue.asyncAfter +5s/15s; fail → handleConnectionFailed).
         _connectTimeoutCts = new CancellationTokenSource();
@@ -308,6 +323,21 @@ public sealed class WebRtcManager : IAsyncDisposable
     private void HandleConnectionFailed(string reason)
     {
         CancelConnectTimeout();
+
+        // Detail dump for the diagnostics log: everything that describes WHY.
+        var peer = _peerConnection;
+        var ice = peer?.iceConnectionState.ToString() ?? "no peer connection";
+        var pcState = peer?.connectionState.ToString() ?? "none";
+        var dc = _dataChannel is null
+            ? "no data channel"
+            : $"state={_dataChannel.readyState}";
+        _log.Error($"Connection failed: {reason}\n" +
+                   $"    ICE state: {ice}\n" +
+                   $"    Peer connection state: {pcState}\n" +
+                   $"    Data channel: {dc}\n" +
+                   $"    Target: {_targetId ?? "(none)"}\n" +
+                   $"    Signaling socket: {(_signaling.IsConnected ? "connected" : "closed")}");
+
         lock (_stateLock)
         {
             TeardownConnection(keepSignaling: true);
@@ -394,6 +424,9 @@ public sealed class WebRtcManager : IAsyncDisposable
         _connectTimeoutCts?.Dispose();
         _connectTimeoutCts = null;
     }
+
+    internal static string ShortId(string id) =>
+        id.Length <= 16 ? id : id[..10] + "…" + id[^6..];
 
     public async ValueTask DisposeAsync()
     {

@@ -28,6 +28,7 @@ public sealed class ChatSessionService : IDisposable
     public E2eeCrypto Crypto { get; }
     public ChatDatabase Database { get; }
     public WebRtcManager WebRtc { get; }
+    public DiagnosticLog Log { get; } = new();
 
     /// <summary>The signaling server currently in use (persisted across restarts).</summary>
     public string SignalingServer { get; private set; }
@@ -45,17 +46,25 @@ public sealed class ChatSessionService : IDisposable
         Crypto = LoadOrCreateIdentity();
         Database = new ChatDatabase(Path.Combine(AppDataDir, DbFileName));
 
-        // Precedence: explicit argument > CHATXP_SIGNAL_SERVER env > saved setting > default.
         SignalingServer = signalingServer
             ?? System.Environment.GetEnvironmentVariable("CHATXP_SIGNAL_SERVER")
             ?? LoadSavedSignalingServer()
             ?? SignalingClient.DefaultServer;
 
-        WebRtc = new WebRtcManager(Crypto.Base64PublicKey, new SignalingClient());
+        WebRtc = new WebRtcManager(Crypto.Base64PublicKey, new SignalingClient(), Log);
         WebRtc.SetSignalingServer(SignalingServer);
         WebRtc.OnMessage += HandleIncomingEvent;
 
-        _ = WebRtc.RegisterAsync();
+        Log.Info($"chatxp starting — id {WebRtcLocalPeerId()}…");
+        Log.Info($"Signaling server: {SignalingServer}");
+        try
+        {
+            _ = WebRtc.RegisterAsync();
+        }
+        catch (Exception ex)
+        {
+            Log.Error("Initial signaling registration failed", ex);
+        }
     }
 
     /// <summary>
@@ -85,10 +94,12 @@ public sealed class ChatSessionService : IDisposable
         try
         {
             await WebRtc.RegisterAsync();
+            Log.Info($"Registered on signaling server {trimmed}");
             return null; // applied
         }
         catch (Exception ex)
         {
+            Log.Error($"Could not register on signaling server {trimmed}", ex);
             return $"Could not connect: {ex.Message}";
         }
     }

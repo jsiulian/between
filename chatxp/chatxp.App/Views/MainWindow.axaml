@@ -108,6 +108,26 @@
                     </Grid>
                 </Grid>
             </TabItem>
+            <TabItem Header="Diagnostics">
+                <Grid RowDefinitions="Auto,*" Margin="8">
+                    <StackPanel Grid.Row="0" Orientation="Horizontal" Spacing="8" Margin="4,2">
+                        <TextBlock Text="Connection log" FontSize="14" FontWeight="Bold"
+                                   VerticalAlignment="Center"/>
+                        <Button Content="Clear" Command="{Binding ClearLogCommand}" Padding="10,3"/>
+                    </StackPanel>
+                    <!-- Read-only log; selection off, wrapping entries -->
+                    <ListBox Grid.Row="1" ItemsSource="{Binding LogLines}"
+                             SelectionMode="Single,AlwaysSelected"
+                             ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                        <ListBox.ItemTemplate>
+                            <DataTemplate>
+                                <TextBlock Text="{Binding}" TextWrapping="Wrap"
+                                           FontFamily="Monospace" FontSize="11"/>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+                </Grid>
+            </TabItem>
         </TabControl>
 
             <!-- Footer. The bar has a hardcoded dark background, so the text/dot must

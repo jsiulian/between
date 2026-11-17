@@ -53,6 +53,9 @@ public partial class MainViewModel : ViewModelBase, IDisposable
             IsConnected = _session.WebRtc.IsPeerConnected;
         });
 
+        _session.WebRtc.OnDisconnected += reason => OnUi(() =>
+            _logView.Add($"[{DateTimeOffset.Now:HH:mm:ss}] ENDED: {reason}"));
+
         _session.WebRtc.OnIncomingConnection += (fromId, sdp) => OnUi(() =>
         {
             PeerId = fromId;
@@ -79,7 +82,24 @@ public partial class MainViewModel : ViewModelBase, IDisposable
             PeerIsTyping = true;
             _ = ResetTypingAfterDelayAsync();
         });
+
+        // Diagnostics: bridge the session's log sink into the UI (marshal to UI thread).
+        foreach (var existing in _session.Log.Entries)
+            _logView.Add(FormatLogEntry(existing));
+        _session.Log.Added += entry => OnUi(() =>
+        {
+            _logView.Add(FormatLogEntry(entry));
+            if (entry.Level == "ERROR")
+                Status = "Error — see Diagnostics tab";
+        });
     }
+
+    private static string FormatLogEntry(chatxp.App.Services.DiagnosticLog.Entry entry) =>
+        $"[{entry.Time:HH:mm:ss}] {(entry.Level == "ERROR" ? "ERROR" : "INFO ")}: {entry.Message}";
+
+    /// <summary>Diagnostic log lines for the Diagnostics tab (plain strings).</summary>
+    public ObservableCollection<string> LogLines => _logView;
+    private readonly ObservableCollection<string> _logView = new();
 
     private string? _pendingIncoming;
 
@@ -184,6 +204,9 @@ public partial class MainViewModel : ViewModelBase, IDisposable
             ApplyingServer = false;
         }
     }
+
+    [RelayCommand]
+    private void ClearLog() => _logView.Clear();
 
     [RelayCommand]
     private void TypingIndicator()
