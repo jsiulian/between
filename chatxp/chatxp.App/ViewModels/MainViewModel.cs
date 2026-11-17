@@ -15,13 +15,16 @@ public partial class MainViewModel : ViewModelBase, IDisposable
     [ObservableProperty] private string _inputText = "";
     [ObservableProperty] private string _status = "offline";
     [ObservableProperty] private string _peerId = "";
-    [ObservableProperty] private bool _isConnected;
     [ObservableProperty] private bool _peerIsTyping;
     [ObservableProperty] private bool _incomingVisible;
     [ObservableProperty] private string _signalServer = "";
     [ObservableProperty] private bool _applyingServer;
 
-    /// <summary>Footer connection status text.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(ConnectionLabel))]
+    private bool _isConnected;
+
+    /// <summary>Footer connection status text. Notified via IsConnected.</summary>
     public string ConnectionLabel => IsConnected ? "encrypted peer-to-peer" : "offline";
 
     /// <summary>Chat lines of the active conversation (plaintext, for display only —

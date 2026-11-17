@@ -88,7 +88,8 @@
                                 <Border CornerRadius="10" Padding="10,6" Margin="4" MaxWidth="440"
                                         Background="{Binding Mine, Converter={StaticResource MineToBackground}}"
                                         HorizontalAlignment="{Binding Mine, Converter={StaticResource MineToAlignment}}">
-                                    <TextBlock Text="{Binding Text}" TextWrapping="Wrap"/>
+                                    <TextBlock Text="{Binding Text}" TextWrapping="Wrap"
+                                               Foreground="#f0f0f5"/>
                                 </Border>
                             </DataTemplate>
                         </ListBox.ItemTemplate>
