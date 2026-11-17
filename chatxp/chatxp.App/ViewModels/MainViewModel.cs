@@ -36,6 +36,8 @@ public partial class MainViewModel : ViewModelBase, IDisposable
         _session = new ChatSessionService();
         MyId = _session.Crypto.Base64PublicKey;
         SignalServer = _session.SignalingServer;
+        if (_session.IdentityError is not null)
+            Status = _session.IdentityError;
 
         void OnUi(Action action) =>
             Avalonia.Threading.Dispatcher.UIThread.Invoke(action);
@@ -56,8 +58,13 @@ public partial class MainViewModel : ViewModelBase, IDisposable
         _session.WebRtc.OnDisconnected += reason => OnUi(() =>
             _logView.Add($"[{DateTimeOffset.Now:HH:mm:ss}] ENDED: {reason}"));
 
-        _session.WebRtc.OnIncomingConnection += (fromId, sdp) => OnUi(() =>
+        _session.WebRtc.OnIncomingConnection += (fromId, sdp) => OnUi(async () =>
         {
+            if (_session.IsBlocked(fromId))
+            {
+                await _session.WebRtc.RejectIncomingAsync(fromId);
+                return;
+            }
             PeerId = fromId;
             Status = $"Incoming connection from {ShortId(fromId)} — accept?";
             IncomingVisible = true;
@@ -66,8 +73,9 @@ public partial class MainViewModel : ViewModelBase, IDisposable
 
         _session.MessageReceived += tuple => OnUi(() =>
         {
+            var mine = string.Equals(tuple.row.From, MyId, StringComparison.Ordinal);
             Lines.Add(new ChatLine(tuple.row.Id, tuple.row.EventId, tuple.plaintext,
-                false, tuple.row.TimestampUnixMs, tuple.row.ReplyingTo));
+                mine, tuple.row.TimestampUnixMs, tuple.row.ReplyingTo));
             PeerIsTyping = false;
         });
 
@@ -106,6 +114,17 @@ public partial class MainViewModel : ViewModelBase, IDisposable
     private static string ShortId(string id) =>
         id.Length <= 16 ? id : id[..10] + "…" + id[^6..];
 
+    private void LoadLines(string peerId)
+    {
+        Lines.Clear();
+        foreach (var (row, plaintext) in _session.LoadConversation(peerId))
+        {
+            Lines.Add(new ChatLine(row.Id, row.EventId, plaintext,
+                string.Equals(row.From, MyId, StringComparison.Ordinal),
+                row.TimestampUnixMs, row.ReplyingTo));
+        }
+    }
+
     private async Task ResetTypingAfterDelayAsync()
     {
         await Task.Delay(TimeSpan.FromSeconds(3));
@@ -118,7 +137,7 @@ public partial class MainViewModel : ViewModelBase, IDisposable
         if (string.IsNullOrWhiteSpace(ConnectToId)) return;
         PeerId = ConnectToId.Trim();
         _session.SetConnectedPeer(PeerId);
-        Lines.Clear();
+        LoadLines(PeerId);
         Status = "Connecting…";
         await _session.ConnectToPeerAsync(PeerId);
     }
@@ -128,8 +147,8 @@ public partial class MainViewModel : ViewModelBase, IDisposable
     {
         if (_pendingIncoming is null) return;
         _session.SetConnectedPeer(_pendingIncoming);
-        Lines.Clear();
         PeerId = _pendingIncoming;
+        LoadLines(_pendingIncoming);
         IncomingVisible = false;
         await _session.WebRtc.AcceptIncomingAsync(_pendingIncoming);
         _pendingIncoming = null;

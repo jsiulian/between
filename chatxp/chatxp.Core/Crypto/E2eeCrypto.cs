@@ -108,26 +108,69 @@ public sealed class E2eeCrypto : IDisposable
     public static E2eeCrypto? FromIdentityFile(string path)
     {
         if (!File.Exists(path)) return null;
-        var der = File.ReadAllBytes(path);
-        var key = ECDiffieHellman.Create(ECCurve.NamedCurves.nistP256);
-        key.ImportPkcs8PrivateKey(der, out _);
-        return new E2eeCrypto(key);
+
+        if (TryLoad(path, out var loaded)) return loaded;
+
+        // A torn write leaves the primary unusable. Recover from the backup and
+        // restore the primary before the app can register a different identity.
+        var backup = BackupPath(path);
+        if (TryLoad(backup, out loaded))
+        {
+            WriteAtomically(path, File.ReadAllBytes(backup));
+            return loaded;
+        }
+
+        var corrupt = path + ".corrupt-" + DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        File.Copy(path, corrupt);
+        throw new InvalidDataException(
+            $"Identity file is unreadable and no backup could recover it. The damaged file was kept at {corrupt}.");
+    }
+
+    private static bool TryLoad(string path, out E2eeCrypto? crypto)
+    {
+        crypto = null;
+        if (!File.Exists(path)) return false;
+
+        try
+        {
+            var der = File.ReadAllBytes(path);
+            var key = ECDiffieHellman.Create(ECCurve.NamedCurves.nistP256);
+            key.ImportPkcs8PrivateKey(der, out _);
+            crypto = new E2eeCrypto(key);
+            return true;
+        }
+        catch (CryptographicException)
+        {
+            return false;
+        }
+    }
+
+    private static string BackupPath(string path) => path + ".bak";
+
+    private static void WriteAtomically(string path, byte[] der)
+    {
+        var temp = path + ".tmp-" + Guid.NewGuid().ToString("N");
+        try
+        {
+            File.WriteAllBytes(temp, der);
+            if (!OperatingSystem.IsWindows())
+            {
+                try { File.SetUnixFileMode(temp, UnixFileMode.UserRead | UnixFileMode.UserWrite); }
+                catch { /* best-effort on filesystems without Unix modes */ }
+            }
+            File.Move(temp, path, overwrite: true);
+        }
+        finally
+        {
+            if (File.Exists(temp)) File.Delete(temp);
+        }
     }
 
     public void SaveIdentityFile(string path)
     {
         var der = _privateKey.ExportPkcs8PrivateKey();
-        File.WriteAllBytes(path, der);
-        // Unix: user-only read. Windows: profile dir ACL gives the same effect.
-        if (!OperatingSystem.IsWindows())
-        {
-            try
-            {
-                File.SetUnixFileMode(path,
-                    UnixFileMode.UserRead | UnixFileMode.UserWrite);
-            }
-            catch { /* best-effort */ }
-        }
+        WriteAtomically(path, der);
+        WriteAtomically(BackupPath(path), der);
     }
 
     /// <summary>
@@ -151,6 +194,7 @@ public sealed class E2eeCrypto : IDisposable
         try
         {
             var nonce = new byte[NonceLength];
+            RandomNumberGenerator.Fill(nonce);
             var ciphertext = new byte[plaintext.Length];
             var tag = new byte[TagLength];
             using (var aes = new AesGcm(symmetricKey, TagSizeBytes))

@@ -78,7 +78,15 @@ public sealed class Event
     public string TypeName { get; init; } = EventTypeNames.Send;
 
     [JsonIgnore]
-    public EventTypes Type => EventTypeNames.FromWire(TypeName) ?? EventTypes.Send;
+    public EventTypes? KnownType => EventTypeNames.FromWire(TypeName);
+
+    [JsonIgnore]
+    public EventTypes Type => KnownType ?? EventTypes.Send;
+
+    /// <summary>True for wire types this build understands. Unknown values are dropped
+    /// at the boundary instead of being mistaken for chat messages.</summary>
+    [JsonIgnore]
+    public bool IsKnownType => KnownType is not null;
 
     /// <summary>The encrypted payload (Base64 AES-GCM combined blob), or for control
     /// events (typing/endCall) the plain convention Swift uses.</summary>
@@ -104,22 +112,30 @@ public sealed class Event
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public long? Ts { get; init; }
 
+    /// <summary>Per-author Lamport counter used by clear markers. Comparing the same
+    /// author's counter avoids comparing two different device clocks.</summary>
+    [JsonPropertyName("seq")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public long? Seq { get; init; }
+
     public static string NewId() => Guid.NewGuid().ToString().ToUpperInvariant();
 
     public static Event SendEvent(string payload, string? replyingTo = null,
-        string? author = null, long? ts = null) =>
+        string? author = null, long? ts = null, long? seq = null) =>
         new() { TypeName = EventTypeNames.Send, Payload = payload, ReplyingTo = replyingTo,
-                Author = author, Ts = ts };
+                Author = author, Ts = ts, Seq = seq };
 
-    public static Event DeleteEvent(string eventId, string? author = null, long? ts = null) =>
-        new() { TypeName = EventTypeNames.Delete, Payload = eventId, Author = author, Ts = ts };
+    public static Event DeleteEvent(string eventId, string? author = null, long? ts = null,
+        long? seq = null) =>
+        new() { TypeName = EventTypeNames.Delete, Payload = eventId, Author = author,
+                Ts = ts, Seq = seq };
 
     /// <summary>Rebuilds an op for anti-entropy replay. The id and metadata are preserved
     /// so the receiving peer deduplicates by id regardless of delivery order.</summary>
     public static Event Replay(string id, string typeName, string payload, string? replyingTo,
-        string? author, long? ts) =>
+        string? author, long? ts, long? seq = null) =>
         new() { Id = id, TypeName = typeName, Payload = payload, ReplyingTo = replyingTo,
-                Author = author, Ts = ts };
+                Author = author, Ts = ts, Seq = seq };
 
     public static Event TypingEvent() =>
         new() { TypeName = EventTypeNames.Typing, Payload = string.Empty };

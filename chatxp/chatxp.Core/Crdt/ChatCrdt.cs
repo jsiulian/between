@@ -11,7 +11,8 @@ public sealed record MessageOp(
     long TsMs,
     string Payload,
     string? ReplyingTo,
-    string Peer)
+    string Peer,
+    long Seq = 0)
 {
     public string WireType => Kind == OpKind.Send ? EventTypeNames.Send : EventTypeNames.Delete;
 }
@@ -52,10 +53,11 @@ public static class ChatCrdt
         evt.Ts ?? fallbackTsMs,
         evt.Payload,
         evt.ReplyingTo,
-        peerId);
+        peerId,
+        evt.Seq ?? (evt.Ts ?? fallbackTsMs));
 
     public static Event ToEvent(MessageOp op) => Event.Replay(
-        op.Id, op.WireType, op.Payload, op.ReplyingTo, op.Author, op.TsMs);
+        op.Id, op.WireType, op.Payload, op.ReplyingTo, op.Author, op.TsMs, op.Seq);
 
     private static (long, string, string) OrderKey(MessageOp op) =>
         (op.TsMs, op.Author, op.Id);
@@ -66,9 +68,11 @@ public static class ChatCrdt
         if (c != 0) return c;
         c = string.CompareOrdinal(a.Author, b.Author);
         if (c != 0) return c;
-        c = string.CompareOrdinal(a.Payload, b.Payload);
-        if (c != 0) return c;
         c = string.CompareOrdinal(a.Kind.ToString(), b.Kind.ToString());
-        return c != 0 ? c : string.CompareOrdinal(a.ReplyingTo ?? "", b.ReplyingTo ?? "");
+        if (c != 0) return c;
+        c = string.CompareOrdinal(a.ReplyingTo ?? "", b.ReplyingTo ?? "");
+        if (c != 0) return c;
+        c = a.Seq.CompareTo(b.Seq);
+        return c != 0 ? c : string.CompareOrdinal(a.Payload, b.Payload);
     }
 }

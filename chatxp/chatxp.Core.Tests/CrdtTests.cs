@@ -141,4 +141,57 @@ public class CrdtTests
 
         Assert.Empty(db.GetConversation(Me, Peer));
     }
+
+    [Fact]
+    public void ClearMarker_UsesSequenceNotWallClock()
+    {
+        using var db = FreshDb(out _);
+        db.AddMessage(new Message("m1", "cipher", Peer, Me, 1, "E1", null, Peer, 1000, Seq: 5));
+        db.ClearConversation(Me, Peer);
+
+        // A skewed clock must not let a replayed op with an old sequence through.
+        db.AddMessage(new Message("m2", "cipher", Peer, Me, 2, "E2", null, Peer, 9_999_999_999, Seq: 5));
+        db.AddMessage(new Message("m3", "cipher", Peer, Me, 3, "E3", null, Peer, 10_000_000_000, Seq: 6));
+
+        var visible = db.GetConversation(Me, Peer);
+        Assert.Single(visible);
+        Assert.Equal("m3", visible[0].Id);
+    }
+
+    [Fact]
+    public void UnknownWireType_IsNotTreatedAsSend()
+    {
+        var evt = JsonSerializer.Deserialize<Event>(
+            "{\"id\":\"E1\",\"type\":\"future-type\",\"payload\":\"cipher\"}")!;
+
+        Assert.False(evt.IsKnownType);
+    }
+
+    private static Message FromOp(MessageOp op, string localId)
+    {
+        var remote = op.Peer;
+        var to = op.Author == localId ? remote : localId;
+        return new Message($"row-{op.Id}", op.Payload, op.Author, to, op.TsMs,
+            op.Id, op.ReplyingTo, op.Author, op.TsMs, Seq: op.Seq);
+    }
+
+    [Fact]
+    public void Two_Sessions_Converge_After_Offline_Sends()
+    {
+        using var alice = FreshDb(out _);
+        using var bob = FreshDb(out _);
+
+        alice.AddMessage(new Message("a1", "from-alice", Me, Peer, 10, "EA", null, Me, 10, Seq: 1));
+        bob.AddMessage(new Message("b1", "from-bob", Peer, Me, 20, "EB", null, Peer, 20, Seq: 1));
+
+        foreach (var op in alice.GetOpsForPeer(Me, Peer))
+            bob.AddMessage(FromOp(op, Peer));
+        foreach (var op in bob.GetOpsForPeer(Peer, Me))
+            alice.AddMessage(FromOp(op, Me));
+
+        Assert.Equal(2, alice.GetConversation(Me, Peer).Count);
+        Assert.Equal(2, bob.GetConversation(Peer, Me).Count);
+        Assert.Equal(new[] { "EA", "EB" }, alice.GetConversation(Me, Peer).Select(m => m.EventId));
+        Assert.Equal(new[] { "EA", "EB" }, bob.GetConversation(Peer, Me).Select(m => m.EventId));
+    }
 }

@@ -85,7 +85,6 @@ wss.on('connection', (ws) => {
         if (LOG) {
           console.log(`Unregistered client: ${id}`);
         }
-        break;
       }
     }
   });

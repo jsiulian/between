@@ -38,6 +38,8 @@ struct Event: Codable, Identifiable {
     // client sees exactly the JSON it already understands.
     var author: String?
     var ts: Int64?
+    /// Per-author Lamport counter used by clear markers. Nil for legacy senders.
+    var seq: Int64?
 }
 
 @Model
@@ -52,10 +54,15 @@ final class Message {
     // CRDT op metadata
     var author: String?
     var ts: Int64?
+    var seq: Int64 = 0
+    /// Wire payload as received, so replay is byte-identical and CRDT comparison
+    /// uses the same ciphertext both clients store.
+    var payload: String?
     var hidden: Bool = false
 
     init(id: UUID = UUID(), content: String, from: String, to: String, event: UUID,
-         replyingTo: UUID?, author: String? = nil, ts: Int64? = nil, hidden: Bool = false) {
+         replyingTo: UUID?, author: String? = nil, ts: Int64? = nil,
+         seq: Int64 = 0, payload: String? = nil, hidden: Bool = false) {
         self.id = id
         self.content = content
         self.from = from
@@ -64,6 +71,8 @@ final class Message {
         self.replyingTo = replyingTo
         self.author = author
         self.ts = ts
+        self.seq = seq
+        self.payload = payload
         self.hidden = hidden
         if let ts {
             self.timestamp = Date(timeIntervalSince1970: Double(ts) / 1000.0)
@@ -83,27 +92,36 @@ final class Tombstone {
     var to: String
     var author: String?
     var ts: Int64?
+    var seq: Int64 = 0
 
     init(id: UUID = UUID(), targetEvent: String, from: String, to: String,
-         author: String? = nil, ts: Int64? = nil) {
+         author: String? = nil, ts: Int64? = nil, seq: Int64 = 0) {
         self.id = id
         self.targetEvent = targetEvent
         self.from = from
         self.to = to
         self.author = author
         self.ts = ts
+        self.seq = seq
     }
 }
 
-/// Local clear marker: an op older than `atMs` arriving later stays hidden.
+/// Local clear marker. Newer clients compare per-author `peerSeq`/`selfSeq`, so
+/// device clock skew cannot change what a clear hides. `atMs` remains for legacy ops.
 @Model
 final class ConversationClear {
     @Attribute(.unique) var peer: String
     var atMs: Int64
+    var peerSeq: Int64 = 0
+    var selfSeq: Int64 = 0
+    var selfId: String = ""
 
-    init(peer: String, atMs: Int64) {
+    init(peer: String, atMs: Int64, peerSeq: Int64 = 0, selfSeq: Int64 = 0, selfId: String = "") {
         self.peer = peer
         self.atMs = atMs
+        self.peerSeq = peerSeq
+        self.selfSeq = selfSeq
+        self.selfId = selfId
     }
 }
 

@@ -120,8 +120,9 @@ struct ChatView: View {
                         
                         if let enc = encryptP2PMessage(imagePayload, peerPublicKeyBase64: searchTarget) {
                             let now = ChatCrdt.nowMs()
-                            let event = Event(type: .send, payload: enc, author: pubKey, ts: now)
-                            let msg = Message(content: imagePayload, from: pubKey, to: searchTarget, event:event.id, replyingTo:replyingTo, author: pubKey, ts: now)
+                            let seq = ChatCrdt.nextSeq(for: pubKey)
+                            let event = Event(type: .send, payload: enc, author: pubKey, ts: now, seq: seq)
+                            let msg = Message(content: imagePayload, from: pubKey, to: searchTarget, event:event.id, replyingTo:replyingTo, author: pubKey, ts: now, seq: seq, payload: enc)
                             modelContext.insert(msg)
                             webRTC.send(event)
                         } else {
@@ -214,14 +215,16 @@ struct ChatView: View {
                     Button() {
                         if let enc = encryptP2PMessage(text, peerPublicKeyBase64: searchTarget) {
                             let now = ChatCrdt.nowMs()
+                            let seq = ChatCrdt.nextSeq(for: pubKey)
                             let event = Event(
                                 type: .send, payload: enc,
                                 replyingTo: replyingTo?.uuidString,
                                 author: pubKey,
-                                ts: now
+                                ts: now,
+                                seq: seq
                             )
                             
-                            let msg = Message(content: text, from: pubKey, to: searchTarget, event:event.id, replyingTo:replyingTo, author: pubKey, ts: now)
+                            let msg = Message(content: text, from: pubKey, to: searchTarget, event:event.id, replyingTo:replyingTo, author: pubKey, ts: now, seq: seq, payload: enc)
                             modelContext.insert(msg)
                             
                             webRTC.send(event)
@@ -357,18 +360,21 @@ struct MessageRowView: View {
                 if webRTC.isPeerConnected {
                     Button("Unsend") {
                         let now = ChatCrdt.nowMs()
+                        let seq = ChatCrdt.nextSeq(for: webRTC.localClientId)
                         let event = Event(
                             type:.delete,
                             payload: msg.event?.uuidString ?? "",
                             author: webRTC.localClientId,
-                            ts: now
+                            ts: now,
+                            seq: seq
                         )
                         modelContext.insert(Tombstone(id: event.id,
                                                       targetEvent: event.payload,
                                                       from: webRTC.localClientId,
                                                       to: searchTarget,
                                                       author: webRTC.localClientId,
-                                                      ts: now))
+                                                      ts: now,
+                                                      seq: seq))
                         webRTC.send(event)
                         
                         do {

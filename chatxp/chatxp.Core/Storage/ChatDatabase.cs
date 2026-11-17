@@ -18,7 +18,8 @@ public sealed record Message(
     string? ReplyingTo,
     string? Author = null,
     long TsMs = 0,
-    bool Hidden = false)
+    bool Hidden = false,
+    long Seq = 0)
 {
     // Swift's SwiftData model uses Date precision; we store Unix ms for fidelity.
 }
@@ -31,7 +32,8 @@ public sealed record Tombstone(
     string From,
     string To,
     string? Author,
-    long TsMs);
+    long TsMs,
+    long Seq = 0);
 
 /// <summary>Contact row — mirrors SwiftData Contact (unique webRTCId, humanName, image blob).</summary>
 public sealed record Contact(
@@ -82,7 +84,8 @@ public sealed class ChatDatabase : IDisposable
                 replying_to TEXT,
                 author TEXT,
                 ts_ms INTEGER NOT NULL DEFAULT 0,
-                hidden INTEGER NOT NULL DEFAULT 0
+                hidden INTEGER NOT NULL DEFAULT 0,
+                seq INTEGER NOT NULL DEFAULT 0
             );
             CREATE TABLE IF NOT EXISTS tombstones (
                 event_id TEXT PRIMARY KEY,
@@ -90,13 +93,21 @@ public sealed class ChatDatabase : IDisposable
                 from_id TEXT NOT NULL,
                 to_id TEXT NOT NULL,
                 author TEXT,
-                ts_ms INTEGER NOT NULL
+                ts_ms INTEGER NOT NULL,
+                seq INTEGER NOT NULL DEFAULT 0
             );
             CREATE INDEX IF NOT EXISTS idx_tombstones_target
                 ON tombstones(target_event_id);
             CREATE TABLE IF NOT EXISTS conversation_clears (
                 peer_id TEXT PRIMARY KEY,
-                at_ms INTEGER NOT NULL
+                at_ms INTEGER NOT NULL,
+                peer_seq INTEGER NOT NULL DEFAULT 0,
+                self_seq INTEGER NOT NULL DEFAULT 0,
+                self_id TEXT
+            );
+            CREATE TABLE IF NOT EXISTS counters (
+                author TEXT PRIMARY KEY,
+                seq INTEGER NOT NULL
             );
 
             CREATE TABLE IF NOT EXISTS contacts (
@@ -119,38 +130,69 @@ public sealed class ChatDatabase : IDisposable
     /// <summary>Additive migration for databases created before the CRDT columns existed.</summary>
     private void MigrateCrdtColumns()
     {
-        var existing = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        using (var info = _connection.CreateCommand())
-        {
-            info.CommandText = "PRAGMA table_info(messages);";
-            using var reader = info.ExecuteReader();
-            while (reader.Read()) existing.Add(reader.GetString(1));
-        }
-        foreach (var (name, ddl) in new[]
+        AddColumns("messages", new[]
         {
             ("author", "ALTER TABLE messages ADD COLUMN author TEXT;"),
             ("ts_ms", "ALTER TABLE messages ADD COLUMN ts_ms INTEGER NOT NULL DEFAULT 0;"),
             ("hidden", "ALTER TABLE messages ADD COLUMN hidden INTEGER NOT NULL DEFAULT 0;"),
-        })
+            ("seq", "ALTER TABLE messages ADD COLUMN seq INTEGER NOT NULL DEFAULT 0;"),
+        });
+        AddColumns("tombstones", new[]
         {
-            if (existing.Contains(name)) continue;
-            using var alter = _connection.CreateCommand();
-            alter.CommandText = ddl;
-            alter.ExecuteNonQuery();
-        }
+            ("seq", "ALTER TABLE tombstones ADD COLUMN seq INTEGER NOT NULL DEFAULT 0;"),
+        });
+        AddColumns("conversation_clears", new[]
+        {
+            ("peer_seq", "ALTER TABLE conversation_clears ADD COLUMN peer_seq INTEGER NOT NULL DEFAULT 0;"),
+            ("self_seq", "ALTER TABLE conversation_clears ADD COLUMN self_seq INTEGER NOT NULL DEFAULT 0;"),
+            ("self_id", "ALTER TABLE conversation_clears ADD COLUMN self_id TEXT;"),
+        });
 
-        // Legacy rows have no metadata: derive author/ts from the fields we do have.
+        // Legacy rows have no metadata: derive author/ts/seq from the fields we do have.
         using (var backfill = _connection.CreateCommand())
         {
             backfill.CommandText = """
                 UPDATE messages SET author = from_id WHERE author IS NULL;
                 UPDATE messages SET ts_ms = timestamp_ms WHERE ts_ms = 0;
+                UPDATE messages SET seq = ts_ms WHERE seq = 0;
+                UPDATE tombstones SET seq = ts_ms WHERE seq = 0;
                 DELETE FROM messages WHERE event_id IS NOT NULL AND rowid NOT IN (
                     SELECT MIN(rowid) FROM messages WHERE event_id IS NOT NULL GROUP BY event_id);
                 CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_event ON messages(event_id);
                 """;
             backfill.ExecuteNonQuery();
         }
+    }
+
+    private void AddColumns(string table, IEnumerable<(string Name, string Ddl)> columns)
+    {
+        var existing = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        using (var info = _connection.CreateCommand())
+        {
+            info.CommandText = $"PRAGMA table_info({table});";
+            using var reader = info.ExecuteReader();
+            while (reader.Read()) existing.Add(reader.GetString(1));
+        }
+        foreach (var (name, ddl) in columns)
+        {
+            if (existing.Contains(name)) continue;
+            using var alter = _connection.CreateCommand();
+            alter.CommandText = ddl;
+            alter.ExecuteNonQuery();
+        }
+    }
+
+    /// <summary>Next per-author Lamport counter. Stored so restart cannot reuse a value.</summary>
+    public long NextSeq(string author)
+    {
+        using var cmd = _connection.CreateCommand();
+        cmd.CommandText = """
+            INSERT INTO counters (author, seq) VALUES ($author, 1)
+            ON CONFLICT(author) DO UPDATE SET seq = seq + 1
+            RETURNING seq;
+            """;
+        cmd.Parameters.AddWithValue("$author", author);
+        return Convert.ToInt64(cmd.ExecuteScalar());
     }
 
     // ------------------------------------------------------------ Messages
@@ -161,13 +203,16 @@ public sealed class ChatDatabase : IDisposable
     {
         var ts = message.TsMs != 0 ? message.TsMs : message.TimestampUnixMs;
         var author = message.Author ?? message.From;
-        var hidden = message.Hidden || IsSuppressed(message.EventId, ts, message.From, message.To);
+        var suppliedSeq = message.Seq;
+        var storedSeq = suppliedSeq != 0 ? suppliedSeq : ts;
+        var hidden = message.Hidden
+            || IsSuppressed(message.EventId, ts, suppliedSeq, author, message.From, message.To);
 
         using var cmd = _connection.CreateCommand();
         cmd.CommandText = """
             INSERT OR IGNORE INTO messages
-                (id, content, from_id, to_id, timestamp_ms, event_id, replying_to, author, ts_ms, hidden)
-            VALUES ($id, $content, $from, $to, $ts, $event, $reply, $author, $opTs, $hidden);
+                (id, content, from_id, to_id, timestamp_ms, event_id, replying_to, author, ts_ms, hidden, seq)
+            VALUES ($id, $content, $from, $to, $ts, $event, $reply, $author, $opTs, $hidden, $seq);
             """;
         cmd.Parameters.AddWithValue("$id", message.Id);
         cmd.Parameters.AddWithValue("$content", message.Content);
@@ -179,11 +224,13 @@ public sealed class ChatDatabase : IDisposable
         cmd.Parameters.AddWithValue("$author", author);
         cmd.Parameters.AddWithValue("$opTs", ts);
         cmd.Parameters.AddWithValue("$hidden", hidden ? 1 : 0);
+        cmd.Parameters.AddWithValue("$seq", storedSeq);
         cmd.ExecuteNonQuery();
     }
 
-    /// <summary>True when a tombstone or local clear marker already covers this op.</summary>
-    private bool IsSuppressed(string? eventId, long ts, string from, string to)
+    /// <summary>True when a tombstone or local clear marker already covers this op.
+    /// Newer ops carry a per-author sequence, so no device clock is involved.</summary>
+    private bool IsSuppressed(string? eventId, long ts, long seq, string author, string from, string to)
     {
         if (eventId is not null)
         {
@@ -195,10 +242,17 @@ public sealed class ChatDatabase : IDisposable
         using var clear = _connection.CreateCommand();
         clear.CommandText = """
             SELECT COUNT(*) FROM conversation_clears
-            WHERE (peer_id = $from OR peer_id = $to) AND at_ms >= $ts;
+            WHERE peer_id IN ($from, $to) AND (
+                ($seq > 0 AND (
+                    ($author = self_id AND $seq <= self_seq) OR
+                    ($author IS NOT self_id AND $seq <= peer_seq)))
+                OR ($seq = 0 AND at_ms >= $ts)
+            );
             """;
         clear.Parameters.AddWithValue("$from", from);
         clear.Parameters.AddWithValue("$to", to);
+        clear.Parameters.AddWithValue("$seq", seq);
+        clear.Parameters.AddWithValue("$author", author);
         clear.Parameters.AddWithValue("$ts", ts);
         return Convert.ToInt64(clear.ExecuteScalar()) > 0;
     }
@@ -208,7 +262,7 @@ public sealed class ChatDatabase : IDisposable
     {
         using var cmd = _connection.CreateCommand();
         cmd.CommandText = """
-            SELECT id, content, from_id, to_id, timestamp_ms, event_id, replying_to, author, ts_ms, hidden
+            SELECT id, content, from_id, to_id, timestamp_ms, event_id, replying_to, author, ts_ms, hidden, seq
             FROM messages WHERE event_id = $e;
             """;
         cmd.Parameters.AddWithValue("$e", eventId);
@@ -220,7 +274,7 @@ public sealed class ChatDatabase : IDisposable
     {
         using var cmd = _connection.CreateCommand();
         cmd.CommandText = """
-            SELECT id, content, from_id, to_id, timestamp_ms, event_id, replying_to, author, ts_ms, hidden
+            SELECT id, content, from_id, to_id, timestamp_ms, event_id, replying_to, author, ts_ms, hidden, seq
             FROM messages
             WHERE hidden = 0
               AND ((from_id = $peer AND to_id = $me) OR (from_id = $me AND to_id = $peer))
@@ -239,13 +293,13 @@ public sealed class ChatDatabase : IDisposable
         using var cmd = _connection.CreateCommand();
         cmd.CommandText = """
             SELECT m.id, m.content, m.from_id, m.to_id, m.timestamp_ms, m.event_id,
-                   m.replying_to, m.author, m.ts_ms, m.hidden
+                   m.replying_to, m.author, m.ts_ms, m.hidden, m.seq
             FROM messages m
             JOIN (
-                SELECT remote, MAX(timestamp_ms) AS max_ts
+                SELECT remote, MAX(ts_ms) AS max_ts
                 FROM (
                     SELECT CASE WHEN from_id = $me THEN to_id ELSE from_id END AS remote,
-                           timestamp_ms
+                           ts_ms
                     FROM messages
                     WHERE from_id = $me OR to_id = $me
                 )
@@ -253,10 +307,10 @@ public sealed class ChatDatabase : IDisposable
             ) latest
               ON ((m.from_id = $me AND m.to_id = latest.remote)
                   OR (m.to_id = $me AND m.from_id = latest.remote))
-             AND m.timestamp_ms = latest.max_ts
+             AND m.ts_ms = latest.max_ts
              AND m.hidden = 0
              AND (m.event_id IS NULL OR m.event_id NOT IN (SELECT target_event_id FROM tombstones))
-            ORDER BY m.timestamp_ms DESC
+            ORDER BY m.ts_ms DESC
             LIMIT $limit;
             """;
         cmd.Parameters.AddWithValue("$me", myId);
@@ -265,19 +319,47 @@ public sealed class ChatDatabase : IDisposable
     }
 
     /// <summary>Local wipe of a conversation. Also records a clear marker so replayed
-    /// ops for the peer stay hidden instead of reappearing.</summary>
-    public void DeleteConversation(string peerId)
+    /// ops for both authors stay hidden instead of reappearing.</summary>
+    public void DeleteConversation(string me, string peerId)
     {
+        var peerSeq = MaxSeqFor(me, peerId, peerId);
+        var selfSeq = MaxSeqFor(me, peerId, me);
         using var cmd = _connection.CreateCommand();
         cmd.CommandText = """
             DELETE FROM messages WHERE from_id = $peer OR to_id = $peer;
             DELETE FROM tombstones WHERE from_id = $peer OR to_id = $peer;
-            INSERT INTO conversation_clears (peer_id, at_ms) VALUES ($peer, $at)
-            ON CONFLICT(peer_id) DO UPDATE SET at_ms = MAX(at_ms, excluded.at_ms);
+            INSERT INTO conversation_clears (peer_id, at_ms, peer_seq, self_seq, self_id)
+            VALUES ($peer, $at, $peerSeq, $selfSeq, $me)
+            ON CONFLICT(peer_id) DO UPDATE SET
+                at_ms = MAX(at_ms, excluded.at_ms),
+                peer_seq = MAX(peer_seq, excluded.peer_seq),
+                self_seq = MAX(self_seq, excluded.self_seq),
+                self_id = excluded.self_id;
             """;
         cmd.Parameters.AddWithValue("$peer", peerId);
+        cmd.Parameters.AddWithValue("$me", me);
         cmd.Parameters.AddWithValue("$at", DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+        cmd.Parameters.AddWithValue("$peerSeq", peerSeq);
+        cmd.Parameters.AddWithValue("$selfSeq", selfSeq);
         cmd.ExecuteNonQuery();
+    }
+
+    private long MaxSeqFor(string me, string peerId, string author)
+    {
+        using var cmd = _connection.CreateCommand();
+        cmd.CommandText = """
+            SELECT COALESCE(MAX(seq), 0) FROM (
+                SELECT seq, from_id, to_id FROM messages
+                UNION ALL
+                SELECT seq, from_id, to_id FROM tombstones
+            )
+            WHERE from_id = $author AND ((from_id = $me AND to_id = $peer)
+                                      OR (from_id = $peer AND to_id = $me));
+            """;
+        cmd.Parameters.AddWithValue("$author", author);
+        cmd.Parameters.AddWithValue("$me", me);
+        cmd.Parameters.AddWithValue("$peer", peerId);
+        return Convert.ToInt64(cmd.ExecuteScalar());
     }
 
     /// <summary>Deletes a single message by id (used when handling delete Events).</summary>
@@ -305,7 +387,8 @@ public sealed class ChatDatabase : IDisposable
                 reader.IsDBNull(6) ? null : reader.GetString(6),
                 reader.IsDBNull(7) ? null : reader.GetString(7),
                 reader.GetInt64(8),
-                reader.GetInt64(9) != 0));
+                reader.GetInt64(9) != 0,
+                reader.GetInt64(10)));
         }
         return list;
     }
@@ -325,14 +408,96 @@ public sealed class ChatDatabase : IDisposable
         return Convert.ToInt64(tomb.ExecuteScalar()) > 0;
     }
 
+    /// <summary>Returns the stored op for an event id, for deterministic merge with
+    /// a later copy of the same id.</summary>
+    public MessageOp? GetOpById(string eventId, string localId)
+    {
+        using (var cmd = _connection.CreateCommand())
+        {
+            cmd.CommandText = """
+                SELECT event_id, from_id, to_id, author, ts_ms, content, replying_to, seq
+                FROM messages WHERE event_id = $e;
+                """;
+            cmd.Parameters.AddWithValue("$e", eventId);
+            using var reader = cmd.ExecuteReader();
+            if (reader.Read())
+            {
+                var from = reader.GetString(1);
+                return new MessageOp(
+                    reader.GetString(0), OpKind.Send,
+                    reader.IsDBNull(3) ? from : reader.GetString(3),
+                    reader.GetInt64(4), reader.GetString(5),
+                    reader.IsDBNull(6) ? null : reader.GetString(6),
+                    from == localId ? reader.GetString(2) : from,
+                    reader.GetInt64(7));
+            }
+        }
+        using (var cmd = _connection.CreateCommand())
+        {
+            cmd.CommandText = """
+                SELECT event_id, target_event_id, from_id, to_id, author, ts_ms, seq
+                FROM tombstones WHERE event_id = $e;
+                """;
+            cmd.Parameters.AddWithValue("$e", eventId);
+            using var reader = cmd.ExecuteReader();
+            if (reader.Read())
+            {
+                var from = reader.GetString(2);
+                return new MessageOp(
+                    reader.GetString(0), OpKind.Delete,
+                    reader.IsDBNull(4) ? from : reader.GetString(4),
+                    reader.GetInt64(5), reader.GetString(1), null,
+                    from == localId ? reader.GetString(3) : from,
+                    reader.GetInt64(6));
+            }
+        }
+        return null;
+    }
+
+    /// <summary>Removes stored rows for an event id before replaying the winning op.</summary>
+    public void DeleteOpById(string eventId)
+    {
+        using (var targets = _connection.CreateCommand())
+        {
+            targets.CommandText = "SELECT target_event_id FROM tombstones WHERE event_id = $e;";
+            targets.Parameters.AddWithValue("$e", eventId);
+            var target = targets.ExecuteScalar() as string;
+            if (target is not null)
+            {
+                using var other = _connection.CreateCommand();
+                other.CommandText = """
+                    SELECT COUNT(*) FROM tombstones
+                    WHERE target_event_id = $t AND event_id <> $e;
+                    """;
+                other.Parameters.AddWithValue("$t", target);
+                other.Parameters.AddWithValue("$e", eventId);
+                if (Convert.ToInt64(other.ExecuteScalar()) == 0)
+                {
+                    using var unhide = _connection.CreateCommand();
+                    unhide.CommandText = "UPDATE messages SET hidden = 0 WHERE event_id = $t;";
+                    unhide.Parameters.AddWithValue("$t", target);
+                    unhide.ExecuteNonQuery();
+                }
+            }
+        }
+
+        using var cmd = _connection.CreateCommand();
+        cmd.CommandText = """
+            DELETE FROM messages WHERE event_id = $e;
+            DELETE FROM tombstones WHERE event_id = $e;
+            """;
+        cmd.Parameters.AddWithValue("$e", eventId);
+        cmd.ExecuteNonQuery();
+    }
+
     /// <summary>Stores a remote unsend and hides the target if we already have it.</summary>
     public void AddTombstone(Tombstone tombstone)
     {
         using var cmd = _connection.CreateCommand();
         cmd.CommandText = """
             INSERT OR IGNORE INTO tombstones
-                (event_id, target_event_id, from_id, to_id, author, ts_ms)
-            VALUES ($id, $target, $from, $to, $author, $ts);
+                (event_id, target_event_id, from_id, to_id, author, ts_ms, seq)
+            VALUES ($id, $target, $from, $to, $author, $ts, $seq);
             """;
         cmd.Parameters.AddWithValue("$id", tombstone.EventId);
         cmd.Parameters.AddWithValue("$target", tombstone.TargetEventId);
@@ -340,6 +505,7 @@ public sealed class ChatDatabase : IDisposable
         cmd.Parameters.AddWithValue("$to", tombstone.To);
         cmd.Parameters.AddWithValue("$author", (object?)tombstone.Author ?? DBNull.Value);
         cmd.Parameters.AddWithValue("$ts", tombstone.TsMs);
+        cmd.Parameters.AddWithValue("$seq", tombstone.Seq != 0 ? tombstone.Seq : tombstone.TsMs);
         cmd.ExecuteNonQuery();
 
         using var hide = _connection.CreateCommand();
@@ -355,7 +521,7 @@ public sealed class ChatDatabase : IDisposable
         using (var cmd = _connection.CreateCommand())
         {
             cmd.CommandText = """
-                SELECT event_id, from_id, to_id, author, ts_ms, content, replying_to
+                SELECT event_id, from_id, to_id, author, ts_ms, content, replying_to, seq
                 FROM messages
                 WHERE event_id IS NOT NULL
                   AND ((from_id = $me AND to_id = $peer) OR (from_id = $peer AND to_id = $me));
@@ -371,13 +537,14 @@ public sealed class ChatDatabase : IDisposable
                     reader.IsDBNull(3) ? from : reader.GetString(3),
                     reader.GetInt64(4), reader.GetString(5),
                     reader.IsDBNull(6) ? null : reader.GetString(6),
-                    from == me ? reader.GetString(2) : from));
+                    from == me ? reader.GetString(2) : from,
+                    reader.GetInt64(7)));
             }
         }
         using (var cmd = _connection.CreateCommand())
         {
             cmd.CommandText = """
-                SELECT event_id, target_event_id, from_id, to_id, author, ts_ms
+                SELECT event_id, target_event_id, from_id, to_id, author, ts_ms, seq
                 FROM tombstones
                 WHERE (from_id = $me AND to_id = $peer) OR (from_id = $peer AND to_id = $me);
                 """;
@@ -391,7 +558,8 @@ public sealed class ChatDatabase : IDisposable
                     reader.GetString(0), OpKind.Delete,
                     reader.IsDBNull(4) ? from : reader.GetString(4),
                     reader.GetInt64(5), reader.GetString(1), null,
-                    from == me ? reader.GetString(3) : from));
+                    from == me ? reader.GetString(3) : from,
+                    reader.GetInt64(6)));
             }
         }
         return ops;
@@ -409,16 +577,25 @@ public sealed class ChatDatabase : IDisposable
     /// <summary>Clear a conversation locally; older ops arriving later stay hidden.</summary>
     public void ClearConversation(string me, string peer)
     {
+        var peerSeq = MaxSeqFor(me, peer, peer);
+        var selfSeq = MaxSeqFor(me, peer, me);
         using var cmd = _connection.CreateCommand();
         cmd.CommandText = """
             UPDATE messages SET hidden = 1
             WHERE (from_id = $me AND to_id = $peer) OR (from_id = $peer AND to_id = $me);
-            INSERT INTO conversation_clears (peer_id, at_ms) VALUES ($peer, $at)
-            ON CONFLICT(peer_id) DO UPDATE SET at_ms = MAX(at_ms, excluded.at_ms);
+            INSERT INTO conversation_clears (peer_id, at_ms, peer_seq, self_seq, self_id)
+            VALUES ($peer, $at, $peerSeq, $selfSeq, $me)
+            ON CONFLICT(peer_id) DO UPDATE SET
+                at_ms = MAX(at_ms, excluded.at_ms),
+                peer_seq = MAX(peer_seq, excluded.peer_seq),
+                self_seq = MAX(self_seq, excluded.self_seq),
+                self_id = excluded.self_id;
             """;
         cmd.Parameters.AddWithValue("$me", me);
         cmd.Parameters.AddWithValue("$peer", peer);
         cmd.Parameters.AddWithValue("$at", DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+        cmd.Parameters.AddWithValue("$peerSeq", peerSeq);
+        cmd.Parameters.AddWithValue("$selfSeq", selfSeq);
         cmd.ExecuteNonQuery();
     }
 

@@ -35,15 +35,16 @@ struct ContentView: View {
         }
         let stored = (try? modelContext.fetch(FetchDescriptor<Message>(predicate: messagePredicate))) ?? []
         for msg in stored {
-            // Local rows hold plaintext; re-encrypt with the static shared key so the
-            // peer can decrypt the replayed op.
-            guard let payload = encryptP2PMessage(msg.content, peerPublicKeyBase64: peer) else { continue }
+            // Replay the original wire payload when we have it. Re-encrypting would
+            // change the nonce and give the same op a different payload on each replay.
+            guard let payload = msg.payload ?? encryptP2PMessage(msg.content, peerPublicKeyBase64: peer) else { continue }
             let event = Event(id: msg.event ?? msg.id,
                               type: .send,
                               payload: payload,
                               replyingTo: msg.replyingTo?.uuidString,
                               author: msg.author ?? msg.from,
-                              ts: msg.ts ?? ChatCrdt.nowMs())
+                              ts: msg.ts ?? ChatCrdt.nowMs(),
+                               seq: msg.seq > 0 ? msg.seq : (msg.ts ?? ChatCrdt.nowMs()))
             webRTC.send(event)
         }
 
@@ -56,70 +57,141 @@ struct ContentView: View {
                               type: .delete,
                               payload: tomb.targetEvent,
                               author: tomb.author ?? tomb.from,
-                              ts: tomb.ts ?? ChatCrdt.nowMs())
+                              ts: tomb.ts ?? ChatCrdt.nowMs(),
+                               seq: tomb.seq > 0 ? tomb.seq : (tomb.ts ?? ChatCrdt.nowMs()))
             webRTC.send(event)
         }
     }
 
-    /// Decodes, deduplicates and stores an incoming add. A delete may arrive first —
-    /// the stored tombstone then hides this message on insert.
-    private func handleSend(_ event: Event) {
-        let peer = webRTC.connectedTo
+    /// Stored add or tombstone for an op id, rebuilt so the live receive path can
+    /// merge with the same function the tests exercise.
+    private func existingOp(for id: String) -> MessageOp? {
         let me = webRTC.localClientId
-        let op = event.asOp(peer: peer, fallbackTs: ChatCrdt.nowMs())
-        let eventID = UUID(uuidString: op.id) ?? event.id
+        guard let uuid = UUID(uuidString: id) else { return nil }
 
-        let duplicate = FetchDescriptor<Message>(predicate: #Predicate { $0.event == eventID })
-        if let found = try? modelContext.fetch(duplicate), !found.isEmpty { return }
+        let addPredicate = #Predicate<Message> { $0.event == uuid }
+        if let rows = try? modelContext.fetch(FetchDescriptor<Message>(predicate: addPredicate)),
+           let m = rows.first {
+            let from = m.from
+            return MessageOp(id: id,
+                             kind: .send,
+                             author: m.author ?? from,
+                             ts: m.ts ?? Int64(m.timestamp.timeIntervalSince1970 * 1000),
+                             payload: m.payload ?? m.content,
+                             replyingTo: m.replyingTo?.uuidString,
+                             peer: from == me ? m.to : from,
+                             seq: m.seq)
+        }
 
-        guard let plaintext = decryptP2PMessage(event.payload, peerPublicKeyBase64: peer) else { return }
-        let msg = Message(content: plaintext,
-                          from: peer, to: me,
-                          event: eventID,
-                          replyingTo: event.replyingTo.flatMap { UUID(uuidString: $0) },
-                          author: op.author,
-                          ts: op.ts,
-                          hidden: isSuppressed(op: op, peer: peer))
-        modelContext.insert(msg)
-        try? modelContext.save()
+        let tombPredicate = #Predicate<Tombstone> { $0.id == uuid }
+        if let rows = try? modelContext.fetch(FetchDescriptor<Tombstone>(predicate: tombPredicate)),
+           let t = rows.first {
+            let from = t.from
+            return MessageOp(id: id,
+                             kind: .delete,
+                             author: t.author ?? from,
+                             ts: t.ts ?? ChatCrdt.nowMs(),
+                             payload: t.targetEvent,
+                             replyingTo: nil,
+                             peer: from == me ? t.to : from,
+                             seq: t.seq)
+        }
+        return nil
     }
 
-    /// Stores a remote unsend as a tombstone and hides the target row. Keeping the
-    /// op means a later replay cannot bring the message back.
-    private func handleDelete(_ event: Event) {
+    /// Removes the stored row for a losing op. If it was a tombstone, restore the
+    /// target unless another tombstone still covers it.
+    private func removeStoredOp(for id: String) {
+        guard let uuid = UUID(uuidString: id) else { return }
+
+        let tombPredicate = #Predicate<Tombstone> { $0.id == uuid }
+        if let tombs = try? modelContext.fetch(FetchDescriptor<Tombstone>(predicate: tombPredicate)),
+           let tomb = tombs.first {
+            let target = tomb.targetEvent
+            let others = (try? modelContext.fetch(FetchDescriptor<Tombstone>(
+                predicate: #Predicate { $0.targetEvent == target && $0.id != uuid }))) ?? []
+            if others.isEmpty, let targetID = UUID(uuidString: target) {
+                let targetPredicate = #Predicate<Message> { $0.event == targetID }
+                let rows = (try? modelContext.fetch(
+                    FetchDescriptor<Message>(predicate: targetPredicate))) ?? []
+                rows.forEach { $0.hidden = false }
+            }
+            modelContext.delete(tomb)
+        }
+
+        let addPredicate = #Predicate<Message> { $0.event == uuid }
+        let rows = (try? modelContext.fetch(FetchDescriptor<Message>(predicate: addPredicate))) ?? []
+        rows.forEach { modelContext.delete($0) }
+    }
+
+    /// Merges an incoming op with the copy already stored under the same id. The
+    /// winner is decided once by ChatCrdt, so delivery order cannot change the result.
+    private func handleOp(_ event: Event) {
         let peer = webRTC.connectedTo
         let me = webRTC.localClientId
-        let op = event.asOp(peer: peer, fallbackTs: ChatCrdt.nowMs())
+        let incoming = event.asOp(peer: peer, fallbackTs: ChatCrdt.nowMs())
+        let existing = existingOp(for: incoming.id)
+        let winner = ChatCrdt.merge(existing.map { [$0] } ?? [], [incoming]).first!
+        if let existing, winner == existing { return }
 
-        let duplicate = FetchDescriptor<Tombstone>(predicate: #Predicate { $0.id == event.id })
-        if let found = try? modelContext.fetch(duplicate), !found.isEmpty { return }
+        var plaintext: String?
+        if winner.kind == .send {
+            plaintext = decryptP2PMessage(winner.payload, peerPublicKeyBase64: peer)
+            guard plaintext != nil else { return }
+        }
 
-        let tomb = Tombstone(id: event.id,
-                             targetEvent: event.payload,
-                             from: peer, to: me,
-                             author: op.author,
-                             ts: op.ts)
-        modelContext.insert(tomb)
+        if existing != nil { removeStoredOp(for: winner.id) }
 
-        if let target = UUID(uuidString: event.payload) {
-            let rows = try? modelContext.fetch(
-                FetchDescriptor<Message>(predicate: #Predicate { $0.event == target }))
-            rows?.forEach { $0.hidden = true }
+        let mine = winner.author == me
+        if winner.kind == .send {
+            let eventID = UUID(uuidString: winner.id) ?? event.id
+            let msg = Message(content: plaintext!,
+                              from: mine ? me : peer, to: mine ? peer : me,
+                              event: eventID,
+                              replyingTo: winner.replyingTo.flatMap { UUID(uuidString: $0) },
+                              author: winner.author,
+                              ts: winner.ts,
+                              seq: winner.seq,
+                              payload: winner.payload,
+                              hidden: isSuppressed(op: winner, peer: peer))
+            modelContext.insert(msg)
+        } else {
+            let tomb = Tombstone(id: UUID(uuidString: winner.id) ?? event.id,
+                                 targetEvent: winner.payload,
+                                 from: mine ? me : peer, to: mine ? peer : me,
+                                 author: winner.author,
+                                 ts: winner.ts,
+                                 seq: winner.seq)
+            modelContext.insert(tomb)
+
+            if let target = UUID(uuidString: winner.payload) {
+                let targetPredicate = #Predicate<Message> { $0.event == target }
+                let rows = (try? modelContext.fetch(
+                    FetchDescriptor<Message>(predicate: targetPredicate))) ?? []
+                rows.forEach { $0.hidden = true }
+            }
         }
         try? modelContext.save()
     }
 
-    /// Local suppression from a tombstone or a clear-history marker.
+    /// Local suppression from a tombstone or a clear-history marker. Per-author
+    /// sequence values avoid comparing two device clocks.
     private func isSuppressed(op: MessageOp, peer: String) -> Bool {
         let target = op.id
         let tombPredicate = #Predicate<Tombstone> { $0.targetEvent == target }
         if let found = try? modelContext.fetch(FetchDescriptor<Tombstone>(predicate: tombPredicate)),
            !found.isEmpty { return true }
 
-        let ts = op.ts
-        let clearPredicate = #Predicate<ConversationClear> { $0.peer == peer && $0.atMs >= ts }
-        if let found = try? modelContext.fetch(FetchDescriptor<ConversationClear>(predicate: clearPredicate)),
-           !found.isEmpty { return true }
+        let predicate = #Predicate<ConversationClear> { $0.peer == peer }
+        let clears = (try? modelContext.fetch(FetchDescriptor<ConversationClear>(predicate: predicate))) ?? []
+        for clear in clears {
+            if op.seq > 0 {
+                if op.author == clear.selfId && op.seq <= clear.selfSeq { return true }
+                if op.author != clear.selfId && op.seq <= clear.peerSeq { return true }
+            } else if clear.atMs >= op.ts {
+                return true
+            }
+        }
         return false
     }
 
@@ -147,7 +219,7 @@ struct ContentView: View {
                                 showWipeAlert = true
                             }
                             .alert("What do you want to wipe?", isPresented: $showWipeAlert) {
-                                wipeAlert()
+                                wipeAlert(me: webRTC.localClientId)
                             }
                     }
                 }
@@ -194,8 +266,7 @@ struct ContentView: View {
             webRTC.onMessage = { event in
                 DispatchQueue.main.async {
                     switch event.type {
-                    case .send: handleSend(event)
-                    case .delete: handleDelete(event)
+                    case .send, .delete: handleOp(event)
                     case .typing: isTyping = event.payload == "true"
                     case .endCall:
                         webRTC.disconnect()
@@ -216,20 +287,53 @@ struct ContentView: View {
     
 }
 
+private func wipeAllMessages(modelContext: ModelContext, me: String,
+                             messages: [Message], tombstones: [Tombstone]) {
+    let peers = Set(messages.flatMap { [$0.from, $0.to] }
+                    + tombstones.flatMap { [$0.from, $0.to] })
+        .filter { !$0.isEmpty && $0 != me }
+    let at = ChatCrdt.nowMs()
+
+    for peer in peers {
+        let seqs = messages + tombstones.map { tomb in
+            Message(content: "", from: tomb.from, to: tomb.to, event: tomb.id,
+                    replyingTo: nil, author: tomb.author, ts: tomb.ts, seq: tomb.seq)
+        }
+        let peerSeq = seqs.filter { $0.author == peer }.map(\.seq).max() ?? 0
+        let selfSeq = seqs.filter { $0.author == me }.map(\.seq).max() ?? 0
+
+        let predicate = #Predicate<ConversationClear> { $0.peer == peer }
+        let existing = (try? modelContext.fetch(FetchDescriptor<ConversationClear>(predicate: predicate))) ?? []
+        if let clear = existing.first {
+            clear.atMs = max(clear.atMs, at)
+            clear.peerSeq = max(clear.peerSeq, peerSeq)
+            clear.selfSeq = max(clear.selfSeq, selfSeq)
+            clear.selfId = me
+        } else {
+            modelContext.insert(ConversationClear(peer: peer, atMs: at,
+                                                  peerSeq: peerSeq, selfSeq: selfSeq, selfId: me))
+        }
+    }
+
+    do {
+        try modelContext.delete(model: Message.self)
+        try modelContext.delete(model: Tombstone.self)
+        try modelContext.save()
+    } catch {
+        print(error)
+    }
+}
+
 struct wipeAlert: View {
-    
     @Environment(\.modelContext) var modelContext
-    
+    @Query var messages: [Message]
+    @Query var tombstones: [Tombstone]
+    var me: String
+
     var body: some View {
         Button("Messages") {
-            Task {
-                do {
-                    try modelContext.delete(model: Message.self)
-                    try modelContext.save()
-                } catch {
-                    print(error)
-                }
-            }
+            wipeAllMessages(modelContext: modelContext, me: me,
+                            messages: messages, tombstones: tombstones)
         }
         Button("Contacts") {
             Task {
@@ -242,9 +346,7 @@ struct wipeAlert: View {
             }
         }
         Button("Cancel", role: .cancel) {
-            
+
         }
-        
     }
-    
 }

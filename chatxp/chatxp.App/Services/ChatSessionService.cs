@@ -33,6 +33,11 @@ public sealed class ChatSessionService : IDisposable
     /// <summary>The signaling server currently in use (persisted across restarts).</summary>
     public string SignalingServer { get; private set; }
 
+    /// <summary>Set when the identity file could not be loaded. The app then uses a
+    /// throwaway key, does not register it, and reports the error instead of silently
+    /// replacing the user's identity.</summary>
+    public string? IdentityError { get; }
+
     /// <summary>Base64 identity (public key) of the connected peer, if any.</summary>
     public string? ConnectedPeerId { get; private set; }
 
@@ -43,7 +48,8 @@ public sealed class ChatSessionService : IDisposable
     {
         Directory.CreateDirectory(AppDataDir);
 
-        Crypto = LoadOrCreateIdentity();
+        Crypto = LoadOrCreateIdentity(out var identityError);
+        IdentityError = identityError;
         Database = new ChatDatabase(Path.Combine(AppDataDir, DbFileName));
 
         SignalingServer = signalingServer
@@ -58,6 +64,11 @@ public sealed class ChatSessionService : IDisposable
 
         Log.Info($"chatxp starting — id {WebRtcLocalPeerId()}…");
         Log.Info($"Signaling server: {SignalingServer}");
+        if (IdentityError is not null)
+        {
+            Log.Error(IdentityError);
+            return;
+        }
         try
         {
             _ = WebRtc.RegisterAsync();
@@ -133,13 +144,14 @@ public sealed class ChatSessionService : IDisposable
         if (ciphertext is null) return null;
 
         var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-        var evt = Event.SendEvent(ciphertext, replyingTo, Crypto.Base64PublicKey, now);
+        var seq = Database.NextSeq(Crypto.Base64PublicKey);
+        var evt = Event.SendEvent(ciphertext, replyingTo, Crypto.Base64PublicKey, now, seq);
         WebRtc.Send(evt);
 
         // Store our own outgoing message (encrypted content, like SwiftData in the app).
         var message = new chatxp.core.Storage.Message(
             Guid.NewGuid().ToString(), ciphertext, Crypto.Base64PublicKey,
-            ConnectedPeerId, now, evt.Id, replyingTo, Crypto.Base64PublicKey, now);
+            ConnectedPeerId, now, evt.Id, replyingTo, Crypto.Base64PublicKey, now, Seq: seq);
         Database.AddMessage(message);
         return (evt, message.Id);
     }
@@ -149,7 +161,8 @@ public sealed class ChatSessionService : IDisposable
     public void DeleteMessage(string eventId, string localMessageId)
     {
         var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-        var evt = Event.DeleteEvent(eventId, Crypto.Base64PublicKey, now);
+        var seq = Database.NextSeq(Crypto.Base64PublicKey);
+        var evt = Event.DeleteEvent(eventId, Crypto.Base64PublicKey, now, seq);
         var row = Database.GetMessageByEventId(eventId);
         var peer = row is null
             ? ConnectedPeerId ?? string.Empty
@@ -157,7 +170,7 @@ public sealed class ChatSessionService : IDisposable
 
         if (ConnectedPeerId is not null) WebRtc.Send(evt);
         Database.AddTombstone(new Tombstone(evt.Id, eventId,
-            Crypto.Base64PublicKey, peer, Crypto.Base64PublicKey, now));
+            Crypto.Base64PublicKey, peer, Crypto.Base64PublicKey, now, seq));
         Database.HideMessage(localMessageId);
     }
 
@@ -178,6 +191,21 @@ public sealed class ChatSessionService : IDisposable
     public string? DecryptFor(string encryptedContent, string counterpartId) =>
         Crypto.Decrypt(encryptedContent, counterpartId);
 
+    /// <summary>Stored conversation for a peer, decrypted for display. Used to rebuild
+    /// the view after connect or restart instead of relying on replay events.</summary>
+    public List<(Message row, string plaintext)> LoadConversation(string peerId)
+    {
+        var result = new List<(Message, string)>();
+        foreach (var row in Database.GetConversation(Crypto.Base64PublicKey, peerId))
+        {
+            var plaintext = Crypto.Decrypt(row.Content, peerId);
+            if (plaintext is not null) result.Add((row, plaintext));
+        }
+        return result;
+    }
+
+    public bool IsBlocked(string webRtcId) => Database.IsBlocked(webRtcId);
+
     /// <summary>Sends every local op for the peer when the channel opens. Replay uses the
     /// original event ids, so both peers converge even if messages were sent while apart.</summary>
     private void ReplayOpsForPeer(string peer)
@@ -193,9 +221,10 @@ public sealed class ChatSessionService : IDisposable
 
     private void HandleIncomingEvent(Event evt)
     {
-        if (ConnectedPeerId is null && evt.Type != EventTypes.Typing)
+        if (!evt.IsKnownType)
         {
-            // Events can arrive before the app marks the peer; accepts are peer-bound.
+            Log.Info($"Ignored unknown event type {evt.TypeName}");
+            return;
         }
 
         var peer = WebRtcLocalPeerId();
@@ -204,24 +233,43 @@ public sealed class ChatSessionService : IDisposable
             case EventTypes.Send:
             case EventTypes.Delete:
             {
-                if (Database.HasEvent(evt.Id)) return; // idempotent merge
-                var op = ChatCrdt.FromEvent(evt, peer, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+                var incoming = ChatCrdt.FromEvent(evt, peer,
+                    DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+                var existing = Database.GetOpById(evt.Id, Crypto.Base64PublicKey);
+                var op = existing is null
+                    ? incoming
+                    : ChatCrdt.Merge(new[] { existing }, new[] { incoming }).Single();
+                if (existing is not null && op == existing) return;
+
+                var mine = string.Equals(op.Author, Crypto.Base64PublicKey, StringComparison.Ordinal);
+                var from = mine ? Crypto.Base64PublicKey : peer;
+                var to = mine ? peer : Crypto.Base64PublicKey;
+
+                string? plaintext = null;
                 if (op.Kind == OpKind.Send)
                 {
-                    var plaintext = Crypto.Decrypt(evt.Payload, peer);
+                    plaintext = Crypto.Decrypt(op.Payload, peer);
                     if (plaintext is null) return; // tampered — drop (FR-4.2)
+                }
+
+                if (existing is not null) Database.DeleteOpById(evt.Id);
+
+                if (op.Kind == OpKind.Send)
+                {
                     var message = new chatxp.core.Storage.Message(
-                        Guid.NewGuid().ToString(), evt.Payload, peer,
-                        Crypto.Base64PublicKey, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
-                        evt.Id, evt.ReplyingTo, op.Author, op.TsMs);
+                        Guid.NewGuid().ToString(), op.Payload, from, to,
+                        DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+                        evt.Id, op.ReplyingTo, op.Author, op.TsMs, Seq: op.Seq);
                     Database.AddMessage(message);
-                    MessageReceived?.Invoke((message, plaintext));
+                    var stored = Database.GetMessageByEventId(evt.Id);
+                    if (stored is { Hidden: false })
+                        MessageReceived?.Invoke((message, plaintext!));
                 }
                 else
                 {
-                    Database.AddTombstone(new Tombstone(evt.Id, evt.Payload,
-                        peer, Crypto.Base64PublicKey, op.Author, op.TsMs));
-                    MessageDeleted?.Invoke(evt.Payload);
+                    Database.AddTombstone(new Tombstone(evt.Id, op.Payload,
+                        from, to, op.Author, op.TsMs, op.Seq));
+                    MessageDeleted?.Invoke(op.Payload);
                 }
                 break;
             }
@@ -249,10 +297,11 @@ public sealed class ChatSessionService : IDisposable
     /// <summary>Marks the connected peer (called when accept/connect completes).</summary>
     public void SetConnectedPeer(string peerId) => ConnectedPeerId = peerId;
 
-    private E2eeCrypto LoadOrCreateIdentity()
+    private E2eeCrypto LoadOrCreateIdentity(out string? error)
     {
         // Per NFR-3: OS-protected store equivalent for v1: app-data file
         // (user-level permissions; document limitation in settings UI).
+        error = null;
         var keyPath = Path.Combine(AppDataDir, KeyFileName);
         if (File.Exists(keyPath))
         {
@@ -261,7 +310,11 @@ public sealed class ChatSessionService : IDisposable
                 var loaded = E2eeCrypto.FromIdentityFile(keyPath);
                 if (loaded is not null) return loaded;
             }
-            catch { /* fall through: regenerate */ }
+            catch (InvalidDataException ex)
+            {
+                error = ex.Message;
+                return E2eeCrypto.Create();
+            }
         }
 
         var crypto = E2eeCrypto.Create();

@@ -8,7 +8,7 @@ enum OpKind: String {
 }
 
 /// One immutable op. `id` is the wire Event UUID string and is the op identity.
-struct MessageOp {
+struct MessageOp: Equatable {
     let id: String
     let kind: OpKind
     let author: String
@@ -16,11 +16,31 @@ struct MessageOp {
     let payload: String
     let replyingTo: String?
     let peer: String
+    let seq: Int64
 }
 
 enum ChatCrdt {
     static func nowMs() -> Int64 {
         Int64(Date().timeIntervalSince1970 * 1000)
+    }
+
+    private static let seqLock = NSLock()
+
+    /// Per-author Lamport counter. Persisted so a restart cannot reuse a value used
+    /// by an old clear marker.
+    static func nextSeq(for author: String) -> Int64 {
+        seqLock.lock()
+        defer { seqLock.unlock() }
+        let defaults = Config.sharedDefaults ?? .standard
+        let key = "crdt.seq.\(author)"
+        let next = defaults.integer(forKey: key) + 1
+        defaults.set(next, forKey: key)
+        return Int64(next)
+    }
+
+    static func maxSeq(for author: String) -> Int64 {
+        let defaults = Config.sharedDefaults ?? .standard
+        return Int64(defaults.integer(forKey: "crdt.seq.\(author)"))
     }
 
     /// Set union keyed by op id. A duplicate id keeps the deterministically smallest
@@ -51,9 +71,12 @@ enum ChatCrdt {
     }
 
     private static func prefer(_ a: MessageOp, _ b: MessageOp) -> Bool {
-        if a.payload != b.payload { return a.payload < b.payload }
+        if a.ts != b.ts { return a.ts < b.ts }
+        if a.author != b.author { return a.author < b.author }
         if a.kind.rawValue != b.kind.rawValue { return a.kind.rawValue < b.kind.rawValue }
-        return (a.replyingTo ?? "") < (b.replyingTo ?? "")
+        if a.replyingTo != b.replyingTo { return (a.replyingTo ?? "") < (b.replyingTo ?? "") }
+        if a.seq != b.seq { return a.seq < b.seq }
+        return a.payload < b.payload
     }
 }
 
@@ -67,7 +90,8 @@ extension Event {
                   ts: ts ?? fallbackTs,
                   payload: payload,
                   replyingTo: replyingTo,
-                  peer: peer)
+                  peer: peer,
+                  seq: seq ?? ts ?? fallbackTs)
     }
 }
 
@@ -79,6 +103,7 @@ extension MessageOp {
               payload: payload,
               replyingTo: replyingTo,
               author: author,
-              ts: ts)
+              ts: ts,
+              seq: seq)
     }
 }

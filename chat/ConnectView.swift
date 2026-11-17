@@ -130,10 +130,13 @@ struct ConnectView: View {
                     
                     do {
                         try modelContext.delete(model: Message.self)
+                        try modelContext.delete(model: Tombstone.self)
+                        try modelContext.delete(model: ConversationClear.self)
                         try modelContext.save()
                     } catch {
                         status = error.localizedDescription
                         showError = true
+                        return
                     }
                     
                     let key = loadP256KeyAgreementPrivateKey(account:Config.appGroupIdentifier)

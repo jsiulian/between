@@ -68,24 +68,34 @@ struct HistoryView: View {
     
     
     
-    /// Local clear. Rows stay on disk (hidden) and a timestamp marker keeps older ops
-    /// hidden if the peer replays them on a future connection.
+    /// Local clear. Rows stay on disk (hidden) and per-author sequence markers keep
+    /// older ops hidden when the peer replays them on a future connection.
     private func deleteMessages(from peer: String) {
         let predicate = #Predicate<Message> { msg in
             (msg.from == peer || msg.to == peer) && !msg.hidden
         }
         let rows = (try? modelContext.fetch(FetchDescriptor<Message>(predicate: predicate))) ?? []
+        let me = webRTC.localClientId
         let at = ChatCrdt.nowMs()
         rows.forEach { $0.hidden = true }
 
+        let peerSeq = rows.filter { $0.author == peer }.map(\.seq).max() ?? 0
+        let selfSeq = rows.filter { $0.author == me }.map(\.seq).max() ?? 0
+
         let clearPredicate = #Predicate<ConversationClear> { $0.peer == peer }
         if let existing = try? modelContext.fetch(FetchDescriptor<ConversationClear>(predicate: clearPredicate)) {
-            existing.forEach { $0.atMs = max($0.atMs, at) }
-            if existing.isEmpty {
-                modelContext.insert(ConversationClear(peer: peer, atMs: at))
+            if let clear = existing.first {
+                clear.atMs = max(clear.atMs, at)
+                clear.peerSeq = max(clear.peerSeq, peerSeq)
+                clear.selfSeq = max(clear.selfSeq, selfSeq)
+                clear.selfId = me
+            } else {
+                modelContext.insert(ConversationClear(peer: peer, atMs: at,
+                                                      peerSeq: peerSeq, selfSeq: selfSeq, selfId: me))
             }
         } else {
-            modelContext.insert(ConversationClear(peer: peer, atMs: at))
+            modelContext.insert(ConversationClear(peer: peer, atMs: at,
+                                                  peerSeq: peerSeq, selfSeq: selfSeq, selfId: me))
         }
         try? modelContext.save()
     }

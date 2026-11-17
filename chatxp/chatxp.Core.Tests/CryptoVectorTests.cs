@@ -64,6 +64,22 @@ public class CryptoVectorTests
     }
 
     [Fact]
+    public void Encrypt_Uses_Fresh_Nonce_Per_Message()
+    {
+        var alice = E2eeCrypto.FromPrivateKey(AliceScalar);
+        var bob = E2eeCrypto.FromPrivateKey(BobScalar);
+
+        var first = alice.Encrypt(SwiftPlaintext, BobPub);
+        var second = alice.Encrypt(SwiftPlaintext, BobPub);
+
+        Assert.NotNull(first);
+        Assert.NotNull(second);
+        Assert.NotEqual(first, second);
+        Assert.Equal(SwiftPlaintext, bob.Decrypt(first!, AlicePub));
+        Assert.Equal(SwiftPlaintext, bob.Decrypt(second!, AlicePub));
+    }
+
+    [Fact]
     public void DotNet_Encrypts_Message_Swift_Can_Verify()
     {
         // .NET -> iOS direction, structurally: .NET encrypts with Alice's key towards Bob's

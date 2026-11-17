@@ -65,13 +65,28 @@ public class ChatDatabaseTests : IDisposable
     }
 
     [Fact]
+    public void RecentConversations_Order_By_MessageTime_Not_ReceiptTime()
+    {
+        var lateOld = new Message(Guid.NewGuid().ToString(), "late-old", Alice, Me,
+            DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), "E1", null, Alice, 1000);
+        _db.AddMessage(lateOld);
+        _db.AddMessage(new Message(Guid.NewGuid().ToString(), "newer", Me, Bob,
+            1000, "E2", null, Me, 5000));
+
+        var recent = _db.GetRecentConversations(Me);
+
+        Assert.Equal("newer", recent[0].Content);
+        Assert.Equal("late-old", recent[1].Content);
+    }
+
+    [Fact]
     public void DeleteConversation_Removes_Both_Directions()
     {
         _db.AddMessage(Msg(Alice, Me, "a", 1000));
         _db.AddMessage(Msg(Me, Alice, "b", 2000));
         _db.AddMessage(Msg(Bob, Me, "keep", 3000));
 
-        _db.DeleteConversation(Alice); // HistoryView.deleteMessages(from: peer)
+        _db.DeleteConversation(Me, Alice); // HistoryView.deleteMessages(from: peer)
 
         Assert.Empty(_db.GetConversation(Me, Alice));
         Assert.Single(_db.GetConversation(Me, Bob));
