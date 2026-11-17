@@ -49,7 +49,7 @@
                                    Text="Handshake broker only — it forwards connection offers and never sees message content. Changes are saved and applied on restart too."/>
                         <Grid ColumnDefinitions="*,Auto">
                             <TextBox Grid.Column="0" Text="{Binding SignalServer}"
-                                     Watermark="ws://host:port/"/>
+                                     PlaceholderText="ws://host:port/"/>
                             <Button Grid.Column="1" Content="Apply" Margin="8,0,0,0" Padding="14,4"
                                     Command="{Binding ApplyServerCommand}"
                                     IsEnabled="{Binding !ApplyingServer}"/>
@@ -58,7 +58,7 @@
                         <TextBlock Text="Start a chat" FontSize="16" FontWeight="Bold"/>
                         <TextBlock TextWrapping="Wrap" Opacity="0.7"
                                    Text="Paste the other person's ID (their public key) and connect. Exchange IDs out of band — the signaling server never sees message content."/>
-                        <TextBox Text="{Binding ConnectToId}" Watermark="Peer ID (Base64 public key)…"
+                        <TextBox Text="{Binding ConnectToId}" PlaceholderText="Peer ID (Base64 public key)…"
                                  MinHeight="56" TextWrapping="Wrap"/>
                         <Button Content="Connect" Command="{Binding ConnectCommand}"
                                 HorizontalAlignment="Left" Padding="16,6"/>
@@ -100,7 +100,7 @@
 
                     <!-- Input -->
                     <Grid Grid.Row="2" ColumnDefinitions="*,Auto" Margin="6">
-                        <TextBox Grid.Column="0" Text="{Binding InputText}" Watermark="Message…"
+                        <TextBox Grid.Column="0" Text="{Binding InputText}" PlaceholderText="Message…"
                                  KeyDown="OnInputKeyDown"/>
                         <Button Grid.Column="1" Content="Send" Command="{Binding SendCommand}"
                                 Margin="8,0,0,0" Padding="14,4"/>
@@ -109,18 +109,21 @@
             </TabItem>
         </TabControl>
 
-        <!-- Footer -->
-        <Border Grid.Row="2" Padding="14,8" Background="#16161d">
-            <StackPanel Orientation="Horizontal" Spacing="12">
-                <Ellipse Width="10" Height="10" VerticalAlignment="Center">
-                    <Ellipse.Fill>
-                        <MultiBinding Converter="{StaticResource BoolToBrush}">
-                            <Binding Path="IsConnected" />
-                        </MultiBinding>
-                    </Ellipse.Fill>                </Ellipse>
-                <TextBlock Text="{Binding ConnectionLabel}" Opacity="0.8" FontSize="11"/>
-            </StackPanel>
-        </Border>
+            <!-- Footer. The bar has a hardcoded dark background, so the text/dot must
+                 set their own light colors — independent of the OS light/dark theme. -->
+            <Border Grid.Row="2" Padding="14,8" Background="#1b1b23">
+                <StackPanel Orientation="Horizontal" Spacing="12">
+                    <Ellipse Width="10" Height="10" VerticalAlignment="Center">
+                        <Ellipse.Fill>
+                            <MultiBinding Converter="{StaticResource BoolToBrush}">
+                                <Binding Path="IsConnected" />
+                            </MultiBinding>
+                        </Ellipse.Fill>
+                    </Ellipse>
+                    <TextBlock Text="{Binding ConnectionLabel}" FontSize="11"
+                               Foreground="#e8e8f0"/>
+                </StackPanel>
+            </Border>
     </Grid>
 
 </Window>
