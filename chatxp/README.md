@@ -66,6 +66,25 @@ dotnet test
 # (integration tests start the Node.js server themselves; node must be installed)
 ```
 
+## Package
+
+```bash
+scripts/build-macos-dmg.sh            # arm64 DMG (Apple Silicon)
+scripts/build-macos-dmg.sh x64        # Intel DMG
+scripts/build-macos-dmg.sh arm64 x64  # both
+
+# proper signing instead of ad-hoc:
+SIGN_IDENTITY="Developer ID Application: You (TEAMID)" scripts/build-macos-dmg.sh
+```
+
+The script publishes, bundles (`packaging/Info.plist` + icon), signs, and writes
+`dist/chatxp-macos-<arch>.dmg`. Ad-hoc/un-notarized builds need right-click → Open
+the first time (or `xattr -dr com.apple.quarantine chatxp.app`).
+
+Windows (self-contained, no .NET needed on the target):
+`dotnet publish chatxp.App -c Release -r win-x64 --self-contained true` — output in
+`chatxp.App/bin/Release/net10.0/win-x64/publish/`.
+
 ## Notes
 
 - **WebRTC choice**: SIPSorcery 10.0.17 — pure-managed (works on macOS arm64 /
