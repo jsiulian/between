@@ -36,3 +36,17 @@ public sealed class BoolToBrushConverter : IMultiValueConverter
     public object? Convert(IList<object?> values, Type targetType, object? parameter, CultureInfo culture) =>
         values.OfType<bool>().FirstOrDefault() ? (object)Green : Red;
 }
+
+/// <summary>Collection emptiness: parameter "empty" → true when 0 items; "notempty" → true when ≥1.</summary>
+public sealed class CountIsConverter : IValueConverter
+{
+    public object? Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
+    {
+        var count = value is int i ? i : (value as System.Collections.ICollection)?.Count ?? 0;
+        var wantEmpty = string.Equals(parameter?.ToString(), "empty", StringComparison.OrdinalIgnoreCase);
+        return wantEmpty ? count == 0 : count > 0;
+    }
+
+    public object? ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture) =>
+        throw new NotSupportedException();
+}

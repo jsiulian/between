@@ -10,6 +10,7 @@ namespace chatxp.App.Tests;
 /// bad URL → clean error, no state corruption; good URL → registers on the NEW server
 /// and receives forwards there.
 /// </summary>
+[Collection("app-session")]
 public class SignalingServerSwitchTests : IAsyncLifetime
 {
     private const int TestPort = 3997;

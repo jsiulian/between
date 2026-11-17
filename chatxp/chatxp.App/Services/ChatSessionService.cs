@@ -4,17 +4,6 @@ using chatxp.core.Storage;
 
 namespace chatxp.App.Services;
 
-/// <summary>
-/// Composes the whole core stack into one app-level service: identity key, WebRTC
-/// manager, signaling, local database. Exposes observable UI state (connected peer,
-/// decrypted conversation, contact/address book). This is to chatxp.App what
-/// chatApp.swift + the environment objects are to the iOS app.
-///
-/// Identity persistence (v1): the private key is stored as an encrypted-at-rest PKCS#8
-/// blob next to the database in the OS app-data directory with user-level file
-/// permissions (per business-requirements.md NFR-3 — hardware-backed storage is out
-/// of scope; on macOS the file lives under ~/Library/Application Support).
-/// </summary>
 public sealed class ChatSessionService : IDisposable
 {
     private static readonly string AppDataDir = Path.Combine(
@@ -30,11 +19,12 @@ public sealed class ChatSessionService : IDisposable
     public WebRtcManager WebRtc { get; }
     public DiagnosticLog Log { get; } = new();
 
-    /// <summary>The signaling server currently in use (persisted across restarts).</summary>
-    public string SignalingServer { get; private set; }
+    /// <summary>The pending incoming connection, if any (contact request).</summary>
+    public string? PendingIncomingContactId { get; private set; }
 
-    /// <summary>Base64 identity (public key) of the connected peer, if any.</summary>
-    public string? ConnectedPeerId { get; private set; }
+    /// <summary>The server the pending request arrived on (stored with the contact
+    /// on accept, so future reconnections route via the same server).</summary>
+    private string? _pendingRequestServer;
 
     private readonly string _keyPath = Path.Combine(AppDataDir, KeyFileName);
     private readonly string _settingsPath = Path.Combine(AppDataDir, SettingsFileName);
@@ -54,8 +44,9 @@ public sealed class ChatSessionService : IDisposable
         WebRtc = new WebRtcManager(Crypto.Base64PublicKey, new SignalingClient(), Log);
         WebRtc.SetSignalingServer(SignalingServer);
         WebRtc.OnMessage += HandleIncomingEvent;
+        WebRtc.OnIncomingConnection += HandleIncomingConnection;
 
-        Log.Info($"chatxp starting — id {WebRtcLocalPeerId()}…");
+        Log.Info($"chatxp starting — id {Crypto.Base64PublicKey[..10]}…");
         Log.Info($"Signaling server: {SignalingServer}");
         try
         {
@@ -67,9 +58,215 @@ public sealed class ChatSessionService : IDisposable
         }
     }
 
+    /// <summary>The signaling server currently in use (persisted across restarts).</summary>
+    public string SignalingServer { get; private set; }
+
+    // ------------------------------------------------------------ contacts
+
+    /// <summary>Adds a contact. Nickname is mandatory; per-contact signaling server
+    /// optional (falls back to the default server when null).</summary>
+    public void AddContact(string nickname, string peerId, string? signalingServer = null)
+    {
+        if (string.IsNullOrWhiteSpace(nickname))
+            throw new ArgumentException("Nickname is required.");
+        Database.UpsertContact(peerId, nickname.Trim(), null,
+            string.IsNullOrWhiteSpace(signalingServer) ? null : signalingServer.Trim());
+        ContactAdded?.Invoke(peerId);
+    }
+
+    /// <summary>Renames/edit of a contact (server unchanged when null passed).</summary>
+    public void EditContact(string peerId, string newNickname, string? signalingServer = null)
+    {
+        if (string.IsNullOrWhiteSpace(newNickname))
+            throw new ArgumentException("Nickname is required.");
+        Database.UpsertContact(peerId, newNickname.Trim(), null, signalingServer?.Trim());
+        ContactUpdated?.Invoke(peerId);
+    }
+
+    public void DeleteContact(string peerId)
+    {
+        Database.DeleteContact(peerId);
+        ContactRemoved?.Invoke(peerId);
+    }
+
+    public string? NicknameFor(string peerId) => Database.GetContact(peerId)?.HumanName;
+
+    /// <summary>Per-contact signaling server, or null when the contact has none
+    /// (meaning: use the default).</summary>
+    public string? ServerFor(string peerId) => Database.GetContact(peerId)?.SignalingServer;
+
+    public List<Contact> GetAllContacts() => Database.GetAllContacts();
+
+    // ------------------------------------------------------------ connection
+
+    /// <summary>Auto-accept logic: when an offer comes in from an EXISTING contact,
+    /// the other party's request is accepted automatically (no user prompt). First-time
+    /// senders raise ContactRequestReceived and wait for the user's Accept/Ignore.</summary>
+    private void HandleIncomingConnection(string fromId, string sdp)
+    {
+        if (Database.GetContact(fromId) is not null)
+        {
+            Log.Info($"Incoming connection from known contact {NicknameFor(fromId)} — auto-accepting");
+            // Route via the contact's stored signaling server (per-contact server).
+            if (ServerFor(fromId) is { } server && !string.IsNullOrEmpty(server))
+                WebRtc.SetSignalingServer(server);
+            _ = WebRtc.AcceptIncomingAsync(fromId);
+            SetConnectedPeer(fromId);
+        }
+        else
+        {
+            Log.Info($"Contact request from unknown peer {fromId[..10]}… — pending");
+            PendingIncomingContactId = fromId;
+            // The request arrived on whatever server we're currently registered on —
+            // remember it so Accept can store it as the contact's server.
+            _pendingRequestServer = WebRtcServerUrl;
+            ContactRequestReceived?.Invoke(fromId);
+        }
+    }
+
+    /// <summary>The signaling URL the manager's client is currently configured with
+    /// (the server an incoming request just arrived on).</summary>
+    public string WebRtcServerUrl => WebRtc.SignalingServerUrl;
+
+    /// <summary>Begins a connection to a contact by id. Registers on the contact's
+    /// signaling server when one is stored (per-contact server), otherwise the
+    /// current/default server.</summary>
+    public async Task ConnectToContactAsync(string peerId)
+    {
+        if (ServerFor(peerId) is { } server && !string.IsNullOrEmpty(server))
+            WebRtc.SetSignalingServer(server);
+        SetConnectedPeer(peerId);
+        await WebRtc.ConnectToAsync(peerId);
+    }
+
+    /// <summary>Accept: creates the contact with the request's origin server (so
+    /// future reconnections route via the same signaling server) and answers.</summary>
+    public void AcceptContactRequest(string peerId, string nickname)
+    {
+        PendingIncomingContactId = null;
+        if (Database.GetContact(peerId) is null)
+            Database.UpsertContact(peerId, nickname, null, _pendingRequestServer);
+        _pendingRequestServer = null;
+        _ = WebRtc.AcceptIncomingAsync(peerId);
+        SetConnectedPeer(peerId);
+    }
+
+    public void IgnoreContactRequest(string peerId)
+    {
+        PendingIncomingContactId = null;
+        _ = WebRtc.RejectIncomingAsync(peerId);
+    }
+
+    /// <summary>Reloads history for a peer and provides decrypted lines.</summary>
+    public List<(Message row, string plaintext)> LoadHistory(string peerId)
+    {
+        var rows = Database.GetConversation(Crypto.Base64PublicKey, peerId);
+        var result = new List<(Message, string)>(rows.Count);
+        foreach (var row in rows)
+        {
+            var peer = row.From == Crypto.Base64PublicKey ? row.To : row.From;
+            var plain = DecryptFor(row.Content, peer);
+            if (plain is not null)
+                result.Add((row, plain));
+        }
+        return result;
+    }
+
+    /// <summary>Marks the connected peer (called when accept/connect completes).</summary>
+    public void SetConnectedPeer(string peerId) => ConnectedPeerId = peerId;
+
+    /// <summary>Base64 identity (public key) of the connected peer, if any.</summary>
+    public string? ConnectedPeerId { get; private set; }
+
+    // ------------------------------------------------------------ messaging
+
+    /// <summary>Sends a text message to the connected peer (encrypt → send Event).</summary>
+    public (Event wireEvent, string localMessageId)? SendText(string plaintext, string? replyingTo = null)
+    {
+        if (ConnectedPeerId is null) return null;
+        var ciphertext = Crypto.Encrypt(plaintext, ConnectedPeerId);
+        if (ciphertext is null) return null;
+
+        var evt = Event.SendEvent(ciphertext, replyingTo);
+        WebRtc.Send(evt);
+
+        // Store our own outgoing message (encrypted content, like SwiftData in the app).
+        var message = new chatxp.core.Storage.Message(
+            Guid.NewGuid().ToString(), ciphertext, Crypto.Base64PublicKey,
+            ConnectedPeerId, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+            evt.Id, replyingTo);
+        Database.AddMessage(message);
+        return (evt, message.Id);
+    }
+
+    /// <summary>Requests deletion of a message on both sides (delete Event).</summary>
+    public void DeleteMessage(string eventId, string localMessageId)
+    {
+        if (ConnectedPeerId is not null)
+            WebRtc.Send(Event.DeleteEvent(eventId));
+        Database.DeleteMessage(localMessageId);
+    }
+
+    /// <summary>Decrypts stored ciphertext for display. Returns null for tampered/foreign rows.</summary>
+    public string? DecryptFor(string encryptedContent, string counterpartId) =>
+        Crypto.Decrypt(encryptedContent, counterpartId);
+
+    private void HandleIncomingEvent(Event evt)
+    {
+        var peer = ConnectedPeerId ?? string.Empty;
+        switch (evt.Type)
+        {
+            case EventTypes.Send:
+            {
+                if (ConnectedPeerId is null && PendingIncomingContactId is not null)
+                    return; // message before accept — ignore (requests are signal-level)
+                // Decrypt. Messages from unknown peers cannot be decrypted anyway
+                // (no shared key is possible until both accept).
+                var plaintext = Crypto.Decrypt(evt.Payload, peer);
+                if (plaintext is null) return; // tampered — drop (FR-4.2)
+                var message = new chatxp.core.Storage.Message(
+                    Guid.NewGuid().ToString(), evt.Payload, peer,
+                    Crypto.Base64PublicKey, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+                    evt.Id, evt.ReplyingTo);
+                Database.AddMessage(message);
+                MessageReceived?.Invoke((message, plaintext));
+                break;
+            }
+            case EventTypes.Delete:
+                var row = Database.GetConversation(Crypto.Base64PublicKey, peer)
+                    .FirstOrDefault(m => m.EventId == evt.Payload);
+                if (row is not null) Database.DeleteMessage(row.Id);
+                MessageDeleted?.Invoke(evt.Payload);
+                break;
+            case EventTypes.Typing:
+                PeerTyping?.Invoke();
+                break;
+        }
+    }
+
+    /// <summary>Raised when a decrypted message arrives: (local row, plaintext).</summary>
+    public event Action<(Message row, string plaintext)>? MessageReceived;
+
+    /// <summary>Raised when the peer deleted a message (payload = remote event id).</summary>
+    public event Action<string>? MessageDeleted;
+
+    /// <summary>Raised when the peer's typing indicator fires.</summary>
+    public event Action? PeerTyping;
+
+    /// <summary>First-time contact request received; needs Accept/Ignore.</summary>
+    public event Action<string>? ContactRequestReceived;
+
+    public event Action<string>? ContactAdded;
+
+    public event Action<string>? ContactUpdated;
+
+    public event Action<string>? ContactRemoved;
+
+    // ------------------------------------------------------------ settings
+
     /// <summary>
-    /// Switches the signaling server at runtime (Settings/Connect "Apply"). Validates the
-    /// URL, persists the choice, closes the old socket, and registers on the new server.
+    /// Switches the signaling server at runtime (Settings "Apply"). Validates the URL,
+    /// persists the choice, closes the old socket, and registers on the new server.
     /// Returns null on success or an error message on failure — the caller surfaces it.
     /// </summary>
     public async Task<string?> ApplySignalingServerAsync(string url)
@@ -77,20 +274,16 @@ public sealed class ChatSessionService : IDisposable
         var trimmed = url.Trim();
         if (string.IsNullOrWhiteSpace(trimmed))
             return "Enter a server URL (ws:// or wss://).";
-
         try
         {
-            // Validate scheme before touching state (throws on bad URL/scheme).
             WebRtc.SetSignalingServer(trimmed);
         }
         catch (ArgumentException ex)
         {
             return ex.Message;
         }
-
         SignalingServer = trimmed;
         SaveSignalingServer(trimmed);
-
         try
         {
             await WebRtc.RegisterAsync();
@@ -124,100 +317,10 @@ public sealed class ChatSessionService : IDisposable
         catch { /* best-effort persistence */ }
     }
 
-    /// <summary>Sends a text message to the connected peer (encrypt → send Event).</summary>
-    public (Event wireEvent, string localMessageId)? SendText(string plaintext, string? replyingTo = null)
-    {
-        if (ConnectedPeerId is null) return null;
-        var ciphertext = Crypto.Encrypt(plaintext, ConnectedPeerId);
-        if (ciphertext is null) return null;
-
-        var evt = Event.SendEvent(ciphertext, replyingTo);
-        WebRtc.Send(evt);
-
-        // Store our own outgoing message (encrypted content, like SwiftData in the app).
-        var message = new chatxp.core.Storage.Message(
-            Guid.NewGuid().ToString(), ciphertext, Crypto.Base64PublicKey,
-            ConnectedPeerId, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
-            evt.Id, replyingTo);
-        Database.AddMessage(message);
-        return (evt, message.Id);
-    }
-
-    /// <summary>Requests deletion of a message on both sides (delete Event).</summary>
-    public void DeleteMessage(string eventId, string localMessageId)
-    {
-        if (ConnectedPeerId is not null)
-            WebRtc.Send(Event.DeleteEvent(eventId));
-        Database.DeleteMessage(localMessageId);
-    }
-
-    /// <summary>Initiates a connection to a peer id (Connect flow).</summary>
-    public Task ConnectToPeerAsync(string peerId) =>
-        WebRtc.ConnectToAsync(peerId);
-
-    /// <summary>
-    /// Decrypts stored ciphertext for display. Returns null for tampered/foreign rows.
-    /// </summary>
-    public string? DecryptFor(string encryptedContent, string counterpartId) =>
-        Crypto.Decrypt(encryptedContent, counterpartId);
-
-    private void HandleIncomingEvent(Event evt)
-    {
-        if (ConnectedPeerId is null && evt.Type != EventTypes.Typing)
-        {
-            // Events can arrive before the app marks the peer; accepts are peer-bound.
-        }
-
-        var peer = WebRtcLocalPeerId();
-        switch (evt.Type)
-        {
-            case EventTypes.Send:
-            {
-                var plaintext = Crypto.Decrypt(evt.Payload, peer);
-                if (plaintext is null) return; // tampered — drop (FR-4.2)
-                var message = new chatxp.core.Storage.Message(
-                    Guid.NewGuid().ToString(), evt.Payload, peer,
-                    Crypto.Base64PublicKey, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
-                    evt.Id, evt.ReplyingTo);
-                Database.AddMessage(message);
-                MessageReceived?.Invoke((message, plaintext));
-                break;
-            }
-            case EventTypes.Delete:
-                // Payload carries the remote event id; find the local row by it.
-                var row = Database.GetConversation(Crypto.Base64PublicKey, peer)
-                    .FirstOrDefault(m => m.EventId == evt.Payload);
-                if (row is not null) Database.DeleteMessage(row.Id);
-                MessageDeleted?.Invoke(evt.Payload);
-                break;
-            case EventTypes.Typing:
-                PeerTyping?.Invoke();
-                break;
-        }
-    }
-
-    private string WebRtcLocalPeerId()
-    {
-        // The remote peer is whoever the manager is connected to.
-        return ConnectedPeerId ?? string.Empty;
-    }
-
-    /// <summary>Raised when a decrypted message arrives: (local row, plaintext).</summary>
-    public event Action<(Message row, string plaintext)>? MessageReceived;
-
-    /// <summary>Raised when the peer deleted a message (payload = remote event id).</summary>
-    public event Action<string>? MessageDeleted;
-
-    /// <summary>Raised when the peer's typing indicator fires.</summary>
-    public event Action? PeerTyping;
-
-    /// <summary>Marks the connected peer (called when accept/connect completes).</summary>
-    public void SetConnectedPeer(string peerId) => ConnectedPeerId = peerId;
+    // ------------------------------------------------------------ identity
 
     private E2eeCrypto LoadOrCreateIdentity()
     {
-        // Per NFR-3: OS-protected store equivalent for v1: app-data file
-        // (user-level permissions; document limitation in settings UI).
         var keyPath = Path.Combine(AppDataDir, KeyFileName);
         if (File.Exists(keyPath))
         {
@@ -241,5 +344,20 @@ public sealed class ChatSessionService : IDisposable
     }
 }
 
-/// <summary>Collection of decrypted chat lines for one conversation.</summary>
-public sealed record ChatLine(string Id, string? EventId, string Text, bool Mine, long TimestampMs, string? ReplyingTo);
+/// <summary>Single decrypted chat line for display: plaintext + receive time.</summary>
+public sealed record ChatLine(string Id, string? EventId, string Text, bool Mine,
+    long TimestampUnixMs, string? ReplyingTo)
+{
+    /// <summary>HH:mm for the bubble timestamp (local time).</summary>
+    public string Time => DateTimeOffset.FromUnixTimeMilliseconds(TimestampUnixMs).ToLocalTime()
+        .ToString("HH:mm");
+}
+
+/// <summary>A contact as shown in the Contacts list (server shown as hint).</summary>
+public sealed record ContactView(string WebRtcId, string Nickname, string IdPreview, string? Server);
+
+/// <summary>A pending contact request shown in Notifications (requires a decision).</summary>
+public sealed record PendingRequestView(string PeerId)
+{
+    public string IdPreview => PeerId.Length <= 14 ? PeerId : PeerId[..14] + "…";
+}

@@ -20,13 +20,16 @@ public sealed record Message(
     // Swift's SwiftData model uses Date precision; we store Unix ms for fidelity.
 }
 
-/// <summary>Contact row — mirrors SwiftData Contact (unique webRTCId, humanName, image blob).</summary>
+/// <summary>Contact row — mirrors SwiftData Contact (unique webRTCId, humanName, image blob),
+/// extended with a per-contact signaling server (this port's addition; nullable —
+/// falls back to the default server).</summary>
 public sealed record Contact(
     string Id,
     string WebRtcId,
     string HumanName,
     byte[]? Image,
-    long TimestampUnixMs);
+    long TimestampUnixMs,
+    string? SignalingServer);
 
 /// <summary>Blocked user row — mirrors SwiftData BlockedUser.</summary>
 public sealed record BlockedUser(
@@ -77,7 +80,8 @@ public sealed class ChatDatabase : IDisposable
                 webrtc_id TEXT NOT NULL UNIQUE,
                 human_name TEXT NOT NULL,
                 image BLOB,
-                timestamp_ms INTEGER NOT NULL
+                timestamp_ms INTEGER NOT NULL,
+                signaling_server TEXT
             );
 
             CREATE TABLE IF NOT EXISTS blocked_users (
@@ -86,6 +90,18 @@ public sealed class ChatDatabase : IDisposable
             );
             """;
         cmd.ExecuteNonQuery();
+
+        // Migration: existing databases gain the signaling_server column (nullable —
+        // contacts created before this feature have no per-contact server; the app
+        // treats null as "use the default server").
+        using var migrate = _connection.CreateCommand();
+        migrate.CommandText = "SELECT COUNT(*) FROM pragma_table_info('contacts') WHERE name='signaling_server';";
+        if (Convert.ToInt64(migrate.ExecuteScalar()) == 0)
+        {
+            using var alter = _connection.CreateCommand();
+            alter.CommandText = "ALTER TABLE contacts ADD COLUMN signaling_server TEXT;";
+            alter.ExecuteNonQuery();
+        }
     }
 
     // ------------------------------------------------------------ Messages
@@ -191,28 +207,31 @@ public sealed class ChatDatabase : IDisposable
 
     // ------------------------------------------------------------ Contacts
 
-    public void UpsertContact(string webRtcId, string humanName, byte[]? image = null)
+    public void UpsertContact(string webRtcId, string humanName, byte[]? image = null,
+        string? signalingServer = null)
     {
         using var cmd = _connection.CreateCommand();
         cmd.CommandText = """
-            INSERT INTO contacts (id, webrtc_id, human_name, image, timestamp_ms)
-            VALUES ($id, $webrtc, $name, $image, $ts)
+            INSERT INTO contacts (id, webrtc_id, human_name, image, timestamp_ms, signaling_server)
+            VALUES ($id, $webrtc, $name, $image, $ts, $srv)
             ON CONFLICT(webrtc_id) DO UPDATE SET
                 human_name = excluded.human_name,
-                image = COALESCE(excluded.image, contacts.image);
+                image = COALESCE(excluded.image, contacts.image),
+                signaling_server = COALESCE(excluded.signaling_server, contacts.signaling_server);
             """;
         cmd.Parameters.AddWithValue("$id", Guid.NewGuid().ToString());
         cmd.Parameters.AddWithValue("$webrtc", webRtcId);
         cmd.Parameters.AddWithValue("$name", humanName);
         cmd.Parameters.AddWithValue("$image", (object?)image ?? DBNull.Value);
         cmd.Parameters.AddWithValue("$ts", DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+        cmd.Parameters.AddWithValue("$srv", (object?)signalingServer ?? DBNull.Value);
         cmd.ExecuteNonQuery();
     }
 
     public Contact? GetContact(string webRtcId)
     {
         using var cmd = _connection.CreateCommand();
-        cmd.CommandText = "SELECT id, webrtc_id, human_name, image, timestamp_ms FROM contacts WHERE webrtc_id = $w;";
+        cmd.CommandText = "SELECT id, webrtc_id, human_name, image, timestamp_ms, signaling_server FROM contacts WHERE webrtc_id = $w;";
         cmd.Parameters.AddWithValue("$w", webRtcId);
         return ReadContact(cmd);
     }
@@ -220,7 +239,7 @@ public sealed class ChatDatabase : IDisposable
     public List<Contact> GetAllContacts()
     {
         using var cmd = _connection.CreateCommand();
-        cmd.CommandText = "SELECT id, webrtc_id, human_name, image, timestamp_ms FROM contacts ORDER BY human_name ASC;";
+        cmd.CommandText = "SELECT id, webrtc_id, human_name, image, timestamp_ms, signaling_server FROM contacts ORDER BY human_name ASC;";
         var list = new List<Contact>();
         using var reader = cmd.ExecuteReader();
         while (reader.Read())
@@ -230,7 +249,8 @@ public sealed class ChatDatabase : IDisposable
                 reader.GetString(1),
                 reader.GetString(2),
                 reader.IsDBNull(3) ? null : (byte[])reader[3],
-                reader.GetInt64(4)));
+                reader.GetInt64(4),
+                reader.IsDBNull(5) ? null : reader.GetString(5)));
         }
         return list;
     }
@@ -294,7 +314,8 @@ public sealed class ChatDatabase : IDisposable
             reader.GetString(1),
             reader.GetString(2),
             reader.IsDBNull(3) ? null : (byte[])reader[3],
-            reader.GetInt64(4));
+            reader.GetInt64(4),
+            reader.IsDBNull(5) ? null : reader.GetString(5));
     }
 
     public void Dispose() => _connection.Dispose();

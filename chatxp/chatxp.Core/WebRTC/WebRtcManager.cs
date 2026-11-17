@@ -521,4 +521,7 @@ public sealed class WebRtcManager : IAsyncDisposable
 
     /// <summary>Test hook: whether the signaling socket is still connected.</summary>
     internal bool SignalingConnected => _signaling.IsConnected;
+
+    /// <summary>The signaling server URL currently configured on the client.</summary>
+    public string SignalingServerUrl => _signaling.ServerUri.ToString();
 }

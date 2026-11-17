@@ -5,12 +5,12 @@
         xmlns:cnv="using:chatxp.App.Converters"
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
-        mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="600"
+        mc:Ignorable="d" d:DesignWidth="860" d:DesignHeight="620"
         x:Class="chatxp.App.Views.MainWindow"
         x:DataType="vm:MainViewModel"
         Title="chatxp — Between, cross-platform"
         Icon="avares://chatxp.App/Assets/chatxp.ico"
-        Width="720" Height="600">
+        Width="860" Height="620">
 
     <Design.DataContext>
         <vm:MainViewModel />
@@ -18,90 +18,148 @@
 
     <Window.Resources>
         <cnv:MineToBackgroundConverter x:Key="MineToBackground" />
-        <cnv:BoolToBrushConverter x:Key="BoolToBrush" />
         <cnv:MineToAlignmentConverter x:Key="MineToAlignment" />
+        <cnv:BoolToBrushConverter x:Key="BoolToBrush" />
+        <cnv:CountIsConverter x:Key="CountIs" />
     </Window.Resources>
 
     <Grid RowDefinitions="Auto,*,Auto">
-        <!-- Header: my ID + status -->
+        <!-- Header -->
         <Border Grid.Row="0" Background="#1b1b23" Padding="14,10">
-            <Grid ColumnDefinitions="*,Auto">
+            <Grid ColumnDefinitions="*,Auto,Auto">
                 <StackPanel Grid.Column="0" Spacing="2">
                     <TextBlock Text="My ID" FontSize="11" Opacity="0.6" Foreground="White"/>
                     <Button Command="{Binding CopyMyIdCommand}" Padding="0" Background="Transparent"
                             BorderThickness="0" HorizontalAlignment="Left" Cursor="Hand">
                         <TextBlock Text="{Binding MyId}" FontFamily="Monospace" FontSize="11"
-                                   Foreground="#8ab4ff" TextTrimming="CharacterEllipsis" MaxWidth="480"/>
+                                   Foreground="#8ab4ff" TextTrimming="CharacterEllipsis" MaxWidth="440"/>
                     </Button>
                 </StackPanel>
-                <Border Grid.Column="1" CornerRadius="12" Background="#2d2d3a" Padding="10,4" VerticalAlignment="Center">
+                <!-- Notifications badge -->
+                <Button Grid.Column="1" Content="Notifications" Command="{Binding ShowNotificationsCommand}"
+                        Classes="navTab" Margin="0,0,8,0" Padding="10,4">
+                    <Button.Template>
+                        <ControlTemplate TargetType="Button">
+                            <Border Background="#2d2d3a" CornerRadius="12" Padding="10,4"
+                                    IsVisible="{TemplateBinding IsEnabled}">
+                                <StackPanel Orientation="Horizontal" Spacing="6">
+                                    <TextBlock Text="🔔" FontSize="13"/>
+                                    <TextBlock Text="{Binding Requests.Count}" Foreground="White" FontSize="12"/>
+                                </StackPanel>
+                            </Border>
+                        </ControlTemplate>
+                    </Button.Template>
+                </Button>
+                <Border Grid.Column="2" CornerRadius="12" Background="#2d2d3a" Padding="10,4" VerticalAlignment="Center">
                     <TextBlock Text="{Binding Status}" Foreground="White" FontSize="12"/>
                 </Border>
             </Grid>
         </Border>
 
-        <!-- Content -->
-        <TabControl Grid.Row="1">
-            <TabItem Header="Connect">
-                <ScrollViewer>
-                    <StackPanel Spacing="10" Margin="20">
-                        <TextBlock Text="Signaling server" FontSize="16" FontWeight="Bold"/>
-                        <TextBlock TextWrapping="Wrap" Opacity="0.7"
-                                   Text="Handshake broker only — it forwards connection offers and never sees message content. Changes are saved and applied on restart too."/>
-                        <Grid ColumnDefinitions="*,Auto">
-                            <TextBox Grid.Column="0" Text="{Binding SignalServer}"
-                                     PlaceholderText="ws://host:port/"/>
-                            <Button Grid.Column="1" Content="Apply" Margin="8,0,0,0" Padding="14,4"
-                                    Command="{Binding ApplyServerCommand}"
-                                    IsEnabled="{Binding !ApplyingServer}"/>
-                        </Grid>
-                        <Separator/>
-                        <TextBlock Text="Start a chat" FontSize="16" FontWeight="Bold"/>
-                        <TextBlock TextWrapping="Wrap" Opacity="0.7"
-                                   Text="Paste the other person's ID (their public key) and connect. Exchange IDs out of band — the signaling server never sees message content."/>
-                        <TextBox Text="{Binding ConnectToId}" PlaceholderText="Peer ID (Base64 public key)…"
-                                 MinHeight="56" TextWrapping="Wrap"/>
-                        <Button Content="Connect" Command="{Binding ConnectCommand}"
-                                HorizontalAlignment="Left" Padding="16,6"/>
-                        <Separator/>
-                        <TextBlock Text="Incoming" FontSize="14" FontWeight="Bold"/>
-                    <StackPanel Spacing="6" IsVisible="{Binding IncomingVisible}">
-                        <TextBlock Text="{Binding PeerId}" FontFamily="Monospace" FontSize="11"
-                                   TextTrimming="CharacterEllipsis"/>
-                        <StackPanel Orientation="Horizontal" Spacing="8">
-                            <Button Content="Accept" Command="{Binding AcceptIncomingCommand}" Padding="14,5"/>
-                            <Button Content="Reject" Command="{Binding RejectIncomingCommand}" Padding="14,5"/>
+        <!-- Main tabs -->
+        <TabControl Grid.Row="1" x:Name="MainTabs">
+
+            <!-- ============ Contacts ============ -->
+            <TabItem Header="Contacts">
+                <Grid RowDefinitions="Auto,*">
+                    <StackPanel Grid.Row="0" Orientation="Horizontal" Spacing="10" Margin="16,12,16,0">
+                        <TextBlock Text="Contacts" FontSize="16" FontWeight="Bold" VerticalAlignment="Center"/>
+                        <Button Content="＋ Add contact" Command="{Binding OpenAddContactCommand}"
+                                Padding="10,4"/>
+                    </StackPanel>
+                    <ScrollViewer Grid.Row="1">
+                        <StackPanel Spacing="8" Margin="16,10,16,16">
+                            <!-- Add-contact form (mandatory nickname; optional per-contact server) -->
+                            <Border IsVisible="{Binding IsNewContactFormOpen}"
+                                    Background="#20202b" CornerRadius="10" Padding="14">
+                                <StackPanel Spacing="8">
+                                    <TextBlock Text="New contact" FontWeight="Bold"/>
+                                    <TextBox Text="{Binding FormPeerId}" PlaceholderText="Peer ID (their public key)…"/>
+                                    <TextBox Text="{Binding FormNickname}" PlaceholderText="Nickname (required)…"/>
+                                    <TextBox Text="{Binding FormServer}" PlaceholderText="Signaling server for this contact (ws://…; blank = current server)…"/>
+                                    <TextBlock Text="{Binding FormError}" Foreground="#ff6b6b" FontSize="11"
+                                               IsVisible="{Binding FormError, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
+                                    <StackPanel Orientation="Horizontal" Spacing="8">
+                                        <Button Content="Save" Command="{Binding SaveNewContactCommand}" Padding="14,4"/>
+                                        <Button Content="Cancel" Command="{Binding CancelContactFormCommand}" Padding="14,4"/>
+                                    </StackPanel>
+                                </StackPanel>
+                            </Border>
+                            <!-- Edit-contact form -->
+                            <Border IsVisible="{Binding IsEditContactFormOpen}"
+                                    Background="#20202b" CornerRadius="10" Padding="14">
+                                <StackPanel Spacing="8">
+                                    <TextBlock Text="Edit contact" FontWeight="Bold"/>
+                                    <TextBox Text="{Binding FormNickname}" PlaceholderText="Nickname…"/>
+                                    <TextBox Text="{Binding FormServer}" PlaceholderText="Signaling server (ws://…; blank = current server)…"/>
+                                    <TextBlock Text="{Binding FormError}" Foreground="#ff6b6b" FontSize="11"
+                                               IsVisible="{Binding FormError, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
+                                    <StackPanel Orientation="Horizontal" Spacing="8">
+                                        <Button Content="Save" Command="{Binding SaveEditContactCommand}" Padding="14,4"/>
+                                        <Button Content="Cancel" Command="{Binding CancelContactFormCommand}" Padding="14,4"/>
+                                    </StackPanel>
+                                </StackPanel>
+                            </Border>
+
+                            <TextBlock Text="(no contacts yet)" Opacity="0.5" FontStyle="Italic"
+                                       IsVisible="{Binding Contacts.Count, Converter={StaticResource CountIs}, ConverterParameter=empty}"/>
+                            <ItemsControl ItemsSource="{Binding Contacts}">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate x:DataType="services:ContactView">
+                                        <Border Background="#232330" CornerRadius="10" Padding="12,8" Margin="0,0,0,6">
+                                            <Grid ColumnDefinitions="*,Auto,Auto,Auto">
+                                                <StackPanel Grid.Column="0" Spacing="2" VerticalAlignment="Center">
+                                                    <TextBlock Text="{Binding Nickname}" FontWeight="SemiBold" FontSize="14"/>
+                                                    <TextBlock Text="{Binding IdPreview}" FontFamily="Monospace"
+                                                               FontSize="10" Opacity="0.55"/>
+                                                    <TextBlock Text="{Binding Server}" FontFamily="Monospace"
+                                                               FontSize="9" Opacity="0.4"
+                                                               IsVisible="{Binding Server, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
+                                                </StackPanel>
+                                                <Button Grid.Column="1" Content="Chat" Margin="6,0"
+                                                        Command="{Binding $parent[Window].DataContext.ConnectToContactCommand}"
+                                                        CommandParameter="{Binding WebRtcId}" Padding="12,4"/>
+                                                <Button Grid.Column="2" Content="✎" Margin="2,0"
+                                                        Command="{Binding $parent[Window].DataContext.OpenEditContactCommand}"
+                                                        CommandParameter="{Binding WebRtcId}" Padding="8,4"/>
+                                                <Button Grid.Column="3" Content="🗑"
+                                                        Command="{Binding $parent[Window].DataContext.DeleteContactCommand}"
+                                                        CommandParameter="{Binding WebRtcId}" Padding="8,4"/>
+                                            </Grid>
+                                        </Border>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
                         </StackPanel>
-                    </StackPanel>
-                    <Button Content="Copy my ID" Command="{Binding CopyMyIdCommand}"
-                            HorizontalAlignment="Left" Padding="10,4"/>
-                    </StackPanel>
-                </ScrollViewer>
+                    </ScrollViewer>
+                </Grid>
             </TabItem>
 
+            <!-- ============ Chat ============ -->
             <TabItem Header="Chat">
-                <Grid RowDefinitions="*,Auto,Auto" Margin="8">
-                    <!-- Messages -->
-                    <ListBox Grid.Row="0" ItemsSource="{Binding Lines}"
+                <Grid RowDefinitions="Auto,*,Auto,Auto" IsEnabled="{Binding HasActiveChat}">
+                    <TextBlock Grid.Row="0" Text="{Binding ChatHeader}" FontSize="15" FontWeight="SemiBold"
+                               Margin="16,10,16,4"/>
+                    <ListBox Grid.Row="1" ItemsSource="{Binding Lines}"
                              ScrollViewer.HorizontalScrollBarVisibility="Disabled">
                         <ListBox.ItemTemplate>
                             <DataTemplate x:DataType="services:ChatLine">
                                 <Border CornerRadius="10" Padding="10,6" Margin="4" MaxWidth="440"
                                         Background="{Binding Mine, Converter={StaticResource MineToBackground}}"
                                         HorizontalAlignment="{Binding Mine, Converter={StaticResource MineToAlignment}}">
-                                    <TextBlock Text="{Binding Text}" TextWrapping="Wrap"
-                                               Foreground="#f0f0f5"/>
+                                    <StackPanel Spacing="2">
+                                        <TextBlock Text="{Binding Text}" TextWrapping="Wrap" Foreground="#f0f0f5"/>
+                                        <!-- Sent-time stamp (sender's local clock; see FR-7.2 note) -->
+                                        <TextBlock Text="{Binding Time}" FontSize="9" Opacity="0.55"
+                                                   Foreground="#d8d8e2"/>
+                                    </StackPanel>
                                 </Border>
                             </DataTemplate>
                         </ListBox.ItemTemplate>
                     </ListBox>
-
-                    <!-- Typing indicator -->
-                    <TextBlock Grid.Row="1" Text="peer is typing…" FontStyle="Italic" Opacity="0.6"
-                               IsVisible="{Binding PeerIsTyping}" Margin="10,2"/>
-
-                    <!-- Input -->
-                    <Grid Grid.Row="2" ColumnDefinitions="*,Auto" Margin="6">
+                    <TextBlock Grid.Row="2" Text="peer is typing…" FontStyle="Italic" Opacity="0.6"
+                               IsVisible="{Binding PeerIsTyping}" Margin="14,2"/>
+                    <Grid Grid.Row="3" ColumnDefinitions="*,Auto" Margin="10">
                         <TextBox Grid.Column="0" Text="{Binding InputText}" PlaceholderText="Message…"
                                  KeyDown="OnInputKeyDown"/>
                         <Button Grid.Column="1" Content="Send" Command="{Binding SendCommand}"
@@ -109,6 +167,58 @@
                     </Grid>
                 </Grid>
             </TabItem>
+
+            <!-- ============ Notifications ============ -->
+            <TabItem Header="Notifications">
+                <ScrollViewer>
+                    <StackPanel Spacing="10" Margin="16">
+                        <TextBlock Text="Contact requests" FontSize="16" FontWeight="Bold"/>
+                        <TextBlock TextWrapping="Wrap" Opacity="0.65"
+                                   Text="Incoming connections from peers not yet in your contacts. Each request must be explicitly Accepted or Ignored — it stays until you decide."/>
+                        <TextBlock Text="(no pending requests)" Opacity="0.5" FontStyle="Italic"
+                                   IsVisible="{Binding Requests.Count, Converter={StaticResource CountIs}, ConverterParameter=empty}"/>
+                        <ItemsControl ItemsSource="{Binding Requests}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate x:DataType="services:PendingRequestView">
+                                    <Border Background="#33231f" CornerRadius="10" Padding="14,10" Margin="0,0,0,8">
+                                        <StackPanel Spacing="8">
+                                            <TextBlock FontFamily="Monospace" FontSize="11" Text="{Binding PeerId}"
+                                                       TextTrimming="CharacterEllipsis"/>
+                                            <TextBlock Text="wants to chat" Opacity="0.6" FontSize="12"/>
+                                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                                <Button Content="Accept" Classes="success"
+                                                        Command="{Binding $parent[Window].DataContext.AcceptRequestCommand}"
+                                                        CommandParameter="{Binding PeerId}" Padding="16,5"/>
+                                                <Button Content="Ignore" Classes="danger"
+                                                        Command="{Binding $parent[Window].DataContext.IgnoreRequestCommand}"
+                                                        CommandParameter="{Binding PeerId}" Padding="16,5"/>
+                                            </StackPanel>
+                                        </StackPanel>
+                                    </Border>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                        <Separator/>
+                        <TextBlock Text="(future notification types will appear here)" Opacity="0.4"
+                                   FontStyle="Italic" FontSize="11"/>
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+
+            <!-- ============ Settings ============ -->
+            <TabItem Header="Settings">
+                <ScrollViewer>
+                    <StackPanel Spacing="10" Margin="20">
+                        <Button Content="Copy my ID" Command="{Binding CopyMyIdCommand}"
+                                HorizontalAlignment="Left" Padding="10,4"/>
+                        <Separator/>
+                        <TextBlock TextWrapping="Wrap" Opacity="0.5" FontSize="11"
+                                   Text="Signaling servers are configured per contact (Contacts → add/edit)."/>
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+
+            <!-- ============ Diagnostics ============ -->
             <TabItem Header="Diagnostics">
                 <Grid RowDefinitions="Auto,*" Margin="8">
                     <StackPanel Grid.Row="0" Orientation="Horizontal" Spacing="8" Margin="4,2">
@@ -116,9 +226,7 @@
                                    VerticalAlignment="Center"/>
                         <Button Content="Clear" Command="{Binding ClearLogCommand}" Padding="10,3"/>
                     </StackPanel>
-                    <!-- Read-only log; selection off, wrapping entries -->
                     <ListBox Grid.Row="1" ItemsSource="{Binding LogLines}"
-                             SelectionMode="Single,AlwaysSelected"
                              ScrollViewer.HorizontalScrollBarVisibility="Disabled">
                         <ListBox.ItemTemplate>
                             <DataTemplate>
@@ -131,21 +239,20 @@
             </TabItem>
         </TabControl>
 
-            <!-- Footer. The bar has a hardcoded dark background, so the text/dot must
-                 set their own light colors — independent of the OS light/dark theme. -->
-            <Border Grid.Row="2" Padding="14,8" Background="#1b1b23">
-                <StackPanel Orientation="Horizontal" Spacing="12">
-                    <Ellipse Width="10" Height="10" VerticalAlignment="Center">
-                        <Ellipse.Fill>
-                            <MultiBinding Converter="{StaticResource BoolToBrush}">
-                                <Binding Path="IsConnected" />
-                            </MultiBinding>
-                        </Ellipse.Fill>
-                    </Ellipse>
-                    <TextBlock Text="{Binding ConnectionLabel}" FontSize="11"
-                               Foreground="#e8e8f0"/>
-                </StackPanel>
-            </Border>
+        <!-- Footer -->
+        <Border Grid.Row="2" Padding="14,8" Background="#1b1b23">
+            <StackPanel Orientation="Horizontal" Spacing="12">
+                <Ellipse Width="10" Height="10" VerticalAlignment="Center">
+                    <Ellipse.Fill>
+                        <MultiBinding Converter="{StaticResource BoolToBrush}">
+                            <Binding Path="IsConnected" />
+                        </MultiBinding>
+                    </Ellipse.Fill>
+                </Ellipse>
+                <TextBlock Text="{Binding ConnectionLabel}" FontSize="11"
+                           Foreground="#e8e8f0"/>
+            </StackPanel>
+        </Border>
     </Grid>
 
 </Window>

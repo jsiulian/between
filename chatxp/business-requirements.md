@@ -33,8 +33,9 @@ the two devices' identity keys; the signaling server cannot decrypt anything.
 - FR-1.3 The user can view and copy their Base64 public key ("their ID").
 
 ### FR-2 Signaling
-- FR-2.1 The app connects to a user-configurable signaling server (WebSocket,
-  default `wss://150.230.37.157:3030/`) and registers its identity.
+- FR-2.1 The app connects to a signaling server and registers its identity. Since
+  2026-11-17 the server is **per contact** (FR-7.2a); the startup server (saved
+  setting or default `ws://150.230.37.157:3030/`) is what first-time offers arrive on.
 - FR-2.2 The app interoperates with the existing Node.js signaling server
   (`server/index.js`): register, offer/answer/candidate forwarding by target id,
   `not_found` replies, `reject` propagation. **The server is not ported** — it is
@@ -79,6 +80,58 @@ the two devices' identity keys; the signaling server cannot decrypt anything.
 The original app supports WebRTC audio calls (`CallView`, `enableAudio`, `endCall`
 events) and incoming offer classification ("Voice Call" vs "Text Chat"). This port
 implements **text chat only** for v1 (see below).
+
+### FR-7 Contacts & contact requests ⏳ **in progress (2026-11-17)**
+- FR-7.1 The app has a **Contacts screen**: list, add, edit (rename), delete.
+  Status: ✅ done (Contacts tab; add/edit forms; delete button).
+- FR-7.2 Adding a contact requires two fields: **Peer ID** (public key, as before)
+  and **Nickname** (mandatory). The list displays nicknames; the underlying public
+  key (and thus the ability to reconnect/resume chat later) is retained internally.
+  Status: ✅ done (form validates both fields; list shows nickname + key preview;
+  full key kept in SQLite contacts table).
+- FR-7.2a **Per-contact signaling server** (2026-11-17 addition): each contact
+  optionally carries its own signaling-server URL (ws://…). Connecting to, or
+  auto-accepting a request from, that contact routes via the contact's stored
+  server; blank = the currently-active/default server. First-time requests record
+  the server the offer arrived on, so the accepted contact reconnects via the same
+  server thereafter. The Settings page no longer offers a server field (kept empty)
+  — servers are configured per contact in add/edit. Status: ✅ done (schema column
+  `contacts.signaling_server` with migration for existing DBs; forms; routing in
+  `ConnectToContactAsync`/`HandleIncomingConnection`/`AcceptContactRequest`;
+  tests serialize shared app-data via an xUnit collection).
+- FR-7.3 **Auto-accept for known contacts**: when an offer arrives from a peer that
+  already exists in the local contact list, the recipient's app accepts automatically
+  (no prompt), because both parties have an established relationship. First-time
+  senders (unknown peer id) follow FR-7.4. Status: ✅ done
+  (`ChatSessionService.HandleIncomingConnection` checks the contacts table).
+- FR-7.4 First-time contact requests keep the existing **Accept / Ignore** behavior
+  (FR-3.2). Status: ✅ done (prompt is now the Notifications item below).
+- FR-7.5 Chats are reopened per contact: selecting a contact reconnects and loads
+  the stored (decrypted-on-display) history. Status: ✅ done (chat connect loads
+  history lines before connecting).
+
+### FR-8 Notifications screen ⏳ **in progress (2026-11-17)**
+- FR-8.1 A dedicated **Notifications screen** shows contact requests. Status: ✅
+  done (Notifications tab + header badge linking to it).
+- FR-8.2 A contact request **cannot be dismissed** without an explicit decision:
+  it stays until the user clicks **Accept** or **Ignore**. Status: ✅ done
+  (requests collection has no remove/close affordance other than the two buttons).
+- FR-8.3 Accepting a request creates a contact (with a default nickname the user can
+  rename in Contacts) and connects. Status: ✅ done.
+- FR-8.4 The screen is designed to host other notification types in the future.
+  Status: ✅ scaffolded (single ItemsControl for requests; placeholder note).
+
+### FR-9 Message timestamps ⏳ **in progress (2026-11-17)**
+- FR-9.1 **Display**: every message bubble shows its local timestamp (HH:mm).
+  Status: ✅ done (bubble footer; both sent and received lines).
+- FR-9.2 **Wire format (current state, documented — not yet changed)**: the `Event`
+  JSON carries NO sender timestamp; messages are stamped **locally** on each side at
+  store time. The sender's DB keeps the send time; the receiver's DB keeps the
+  arrival time, so the two devices can show slightly different times for the same
+  exchange (clock skew + channel-setting delay).
+  *Recommendation (not implemented): add an optional `sentAt` field to `Event` —
+  Swift Codable ignores unknown fields, so it is forward-compatible with the iOS
+  app — and use `sentAt` when present, local receive time otherwise.*
 
 ## 3. Non-functional requirements
 

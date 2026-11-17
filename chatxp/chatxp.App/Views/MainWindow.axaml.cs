@@ -14,7 +14,14 @@ public partial class MainWindow : Window
         InitializeComponent();
     }
 
-    /// <summary>Enter to send in the chat box (Shift+Enter for future multiline).</summary>
+    /// <summary>Programmatically selects the Notifications tab (badge deep-link).</summary>
+    public void SelectNotificationsTab()
+    {
+        if (this.FindControl<TabControl>("MainTabs") is { } tabs)
+            tabs.SelectedIndex = 2; // Contacts=0, Chat=1, Notifications=2
+    }
+
+    /// <summary>Enter to send in the chat box.</summary>
     private void OnInputKeyDown(object? sender, KeyEventArgs e)
     {
         if (e.Key == Key.Enter)
