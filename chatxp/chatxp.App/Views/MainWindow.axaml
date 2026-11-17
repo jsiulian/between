@@ -44,15 +44,7 @@
             <TabItem Header="Connect">
                 <ScrollViewer>
                     <StackPanel Spacing="10" Margin="20">
-                        <TextBlock Text="Start a chat" FontSize="16" FontWeight="Bold"/>
-                        <TextBlock TextWrapping="Wrap" Opacity="0.7"
-                                   Text="Paste the other person's ID (their public key) and connect. Exchange IDs out of band — the signaling server never sees message content."/>
-                        <TextBox Text="{Binding ConnectToId}" Watermark="Peer ID (Base64 public key)…"
-                                 MinHeight="56" TextWrapping="Wrap"/>
-                        <Button Content="Connect" Command="{Binding ConnectCommand}"
-                                HorizontalAlignment="Left" Padding="16,6"/>
-                        <Separator/>
-                        <TextBlock Text="Signaling server" FontSize="14" FontWeight="Bold"/>
+                        <TextBlock Text="Signaling server" FontSize="16" FontWeight="Bold"/>
                         <TextBlock TextWrapping="Wrap" Opacity="0.7"
                                    Text="Handshake broker only — it forwards connection offers and never sees message content. Changes are saved and applied on restart too."/>
                         <Grid ColumnDefinitions="*,Auto">
@@ -62,6 +54,14 @@
                                     Command="{Binding ApplyServerCommand}"
                                     IsEnabled="{Binding !ApplyingServer}"/>
                         </Grid>
+                        <Separator/>
+                        <TextBlock Text="Start a chat" FontSize="16" FontWeight="Bold"/>
+                        <TextBlock TextWrapping="Wrap" Opacity="0.7"
+                                   Text="Paste the other person's ID (their public key) and connect. Exchange IDs out of band — the signaling server never sees message content."/>
+                        <TextBox Text="{Binding ConnectToId}" Watermark="Peer ID (Base64 public key)…"
+                                 MinHeight="56" TextWrapping="Wrap"/>
+                        <Button Content="Connect" Command="{Binding ConnectCommand}"
+                                HorizontalAlignment="Left" Padding="16,6"/>
                         <Separator/>
                         <TextBlock Text="Incoming" FontSize="14" FontWeight="Bold"/>
                     <StackPanel Spacing="6" IsVisible="{Binding IncomingVisible}">
