@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using chatxp.core;
 using Xunit;
 
@@ -46,6 +47,87 @@ public sealed class LogSinkTests
         // And the detail block includes ICE/peer/data-channel context.
         Assert.Contains(log.Entries, e =>
             e.level == "ERROR" && e.message.Contains("ICE state: no peer connection"));
+    }
+
+    [Fact]
+    public async Task AcceptIncoming_Timeout_Appends_Failure_Details()
+    {
+        // Regression for the bug: accepting an offer whose peer then never completes
+        // ICE (e.g. it died) used to hang silently with NOTHING in the diagnostics log.
+        var log = new CapturingLog();
+
+        // Start the REAL Node.js signaling server on a scratch port (same approach as
+        // SignalingClientTests) so the offer can actually be forwarded to the manager.
+        const int testPort = 3996;
+        var serverDir = Path.GetFullPath(Path.Combine(
+            AppContext.BaseDirectory, "..", "..", "..", "..", "..", "server"));
+        using var server = Process.Start(new ProcessStartInfo
+        {
+            FileName = "node",
+            Arguments = $"index.js {testPort}",
+            WorkingDirectory = serverDir,
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+        })!;
+        try
+        {
+            using var ready = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            while (!ready.Token.IsCancellationRequested)
+            {
+                try
+                {
+                    using var probe = new System.Net.Sockets.TcpClient();
+                    await probe.ConnectAsync("127.0.0.1", testPort, ready.Token);
+                    if (probe.Connected) break;
+                }
+                catch { /* retry */ }
+                await Task.Delay(100, ready.Token);
+            }
+
+            await using var manager = new WebRtcManager("local-id", new SignalingClient(), log);
+            manager.SetSignalingServer($"ws://127.0.0.1:{testPort}/");
+            await manager.RegisterAsync();
+
+            // "carol" sends an offer and immediately vanishes — the manager accepts,
+            // the 15s timeout fires, and the failure must appear in the log.
+            await using var carol = new SignalingClient();
+            carol.SetSignalingServer($"ws://127.0.0.1:{testPort}/");
+            await carol.RegisterAsync("carol-id");
+            await carol.SendAsync(SignalingMessage.Offer("carol-id", "local-id", "v=0 fake"));
+            await carol.CloseSocketAsync();
+
+            var incoming = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+            manager.OnIncomingConnection += (from, sdp) => incoming.TrySetResult(from);
+            await incoming.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+            var failed = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+            manager.OnDisconnected += reason => failed.TrySetResult(reason);
+
+            await manager.AcceptIncomingAsync("carol-id");
+
+            var reason = await failed.Task.WaitAsync(TimeSpan.FromSeconds(25));
+
+            // Snapshot while holding the harness lock: the manager's callbacks can
+            // still be appending from background threads (ICE timers don't stop on
+            // failure). Asserting on a copy avoids the enumeration race.
+            List<(string level, string message)> snapshot;
+            lock (log)
+            {
+                snapshot = log.Entries.ToList();
+            }
+
+            Assert.Contains(snapshot, e =>
+                e.level == "ERROR" && e.message.Contains("Connection failed:"));
+            Assert.Contains(snapshot, e =>
+                e.level == "INFO" && e.message.Contains("Accepting incoming connection"));
+        }
+        finally
+        {
+            if (!server.HasExited)
+                server.Kill(entireProcessTree: true);
+            server.WaitForExit(5000);
+        }
     }
 
     [Fact]

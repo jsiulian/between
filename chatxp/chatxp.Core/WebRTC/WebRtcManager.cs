@@ -127,7 +127,7 @@ public sealed class WebRtcManager : IAsyncDisposable
             DataChannelLabel, new RTCDataChannelInit { ordered = true }).ConfigureAwait(false);
         HookDataChannel(_dataChannel);
 
-        _log.Info("Offer sent, waiting for answer (60s timeout)…");
+        _log.Info("Offer sent, waiting for answer (15s timeout)…");
 
         // 15s timeout (Swift uses DispatchQueue.asyncAfter +5s/15s; fail → handleConnectionFailed).
         _connectTimeoutCts = new CancellationTokenSource();
@@ -146,17 +146,44 @@ public sealed class WebRtcManager : IAsyncDisposable
     /// <summary>Accepts a pending incoming connection (mirrors acceptOffer).</summary>
     public async Task AcceptIncomingAsync(string fromId, CancellationToken cancellationToken = default)
     {
-        var offerSdp = _pendingOfferSdps[fromId];
+        if (!_pendingOfferSdps.TryGetValue(fromId, out var offerSdp))
+        {
+            _log.Error($"Accept failed: no pending offer from {ShortId(fromId)}");
+            HandleConnectionFailed("No pending offer to accept");
+            return;
+        }
         _pendingOfferSdps.Remove(fromId);
 
+        CancelConnectTimeout();
         lock (_stateLock)
         {
             TeardownConnection(keepSignaling: true);
             _targetId = fromId;
         }
+
+        _log.Info($"Accepting incoming connection from {ShortId(fromId)}…");
         OnConnectionStateChanged?.Invoke("connecting");
 
-        await RegisterAsync(cancellationToken).ConfigureAwait(false);
+        // Same 15s timeout as the outbound flow: if ICE never completes after we
+        // accept, the user gets a failure (and diagnostics), not a silent hang.
+        _connectTimeoutCts = new CancellationTokenSource();
+        _ = Task.Delay(ConnectTimeout, _connectTimeoutCts.Token).ContinueWith(t =>
+        {
+            if (!t.IsCanceled && !IsPeerConnected)
+                HandleConnectionFailed("Connection attempt timed out");
+        }, TaskScheduler.Default);
+
+        try
+        {
+            await RegisterAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            _log.Error($"Accept aborted: signaling registration to " +
+                       $"{_signaling.ServerUri} failed", ex);
+            HandleConnectionFailed("Signaling server unreachable");
+            return;
+        }
 
         _peerConnection = CreatePeerConnection();
         _peerConnection.ondatachannel += ch => HookDataChannel(ch);
@@ -168,6 +195,8 @@ public sealed class WebRtcManager : IAsyncDisposable
         });
         if (result != SetDescriptionResultEnum.OK)
         {
+            _log.Error($"Accept failed: remote offer rejected by setRemoteDescription " +
+                       $"({result}), offer was {offerSdp.Length} chars");
             HandleConnectionFailed("Invalid offer");
             return;
         }
@@ -176,8 +205,17 @@ public sealed class WebRtcManager : IAsyncDisposable
 
         var answer = _peerConnection.createAnswer(null);
         await _peerConnection.setLocalDescription(answer).ConfigureAwait(false);
-        await _signaling.SendAsync(SignalingMessage.Answer(LocalId, fromId, answer.sdp),
-            cancellationToken).ConfigureAwait(false);
+        try
+        {
+            await _signaling.SendAsync(SignalingMessage.Answer(LocalId, fromId, answer.sdp),
+                cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            _log.Error("Accept aborted: failed to send answer over signaling", ex);
+            HandleConnectionFailed("Answer could not be delivered");
+        }
+        _log.Info("Answer sent, waiting for peer to connect (15s timeout)…");
     }
 
     /// <summary>Rejects a pending incoming connection (mirrors the reject alert action).</summary>
@@ -246,6 +284,7 @@ public sealed class WebRtcManager : IAsyncDisposable
 
         pc.onconnectionstatechange += state =>
         {
+            _log.Info($"Peer connection state: {state.ToString().ToLowerInvariant()}");
             OnConnectionStateChanged?.Invoke(state.ToString().ToLowerInvariant());
             switch (state)
             {
@@ -262,6 +301,7 @@ public sealed class WebRtcManager : IAsyncDisposable
 
         pc.oniceconnectionstatechange += state =>
         {
+            _log.Info($"ICE state: {state.ToString().ToLowerInvariant()}");
             if (state == RTCIceConnectionState.connected)
                 HandlePeerBecameReachable();
         };
