@@ -2,7 +2,7 @@ using System.Collections.ObjectModel;
 using chatxp.core;
 using chatxp.core.Storage;
 
-namespace chatxp.App.Services;
+namespace chatxp.AvaloniaApp.Services;
 
 public sealed class ChatSessionService : IDisposable
 {

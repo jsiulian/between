@@ -1,9 +1,9 @@
 using System.Diagnostics;
 using chatxp.core;
-using chatxp.App.Services;
+using chatxp.AvaloniaApp.Services;
 using Xunit;
 
-namespace chatxp.App.Tests;
+namespace chatxp.AvaloniaApp.Tests;
 
 /// <summary>
 /// Verifies the runtime signaling-server switch (UI "Apply" flow):
@@ -72,7 +72,7 @@ public class SignalingServerSwitchTests : IAsyncLifetime
     }
 
     // Build the app assembly reference is via the App project; these tests live in the
-    // app's test project? No — keep them here referencing chatxp.App.
+    // app's test project? No — keep them here referencing chatxp.AvaloniaApp.
 
     [Fact]
     public async Task BadUrl_Returns_Error_And_GoodUrl_Registers_On_New_Server()

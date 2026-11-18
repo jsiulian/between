@@ -27,14 +27,14 @@ DIST_DIR="dist"
 
 for ARCH in "${ARCHS[@]}"; do
     RID="osx-$ARCH"
-    PUBLISH_DIR="chatxp.App/bin/$CONFIG/net10.0/$RID/publish"
+    PUBLISH_DIR="chatxp.AvaloniaApp/bin/$CONFIG/net10.0/$RID/publish"
     APP_NAME="chatxp.app"
     DMG_NAME="chatxp-macos-$ARCH.dmg"
 
-    ICON_SOURCE="chatxp.App/Assets/chatxp.icns"
+    ICON_SOURCE="chatxp.AvaloniaApp/Assets/chatxp.icns"
 
     echo "==> [$ARCH] dotnet publish -r $RID (self-contained)"
-    dotnet publish chatxp.App/chatxp.App.csproj -c "$CONFIG" -r "$RID" --self-contained true
+    dotnet publish chatxp.AvaloniaApp/chatxp.AvaloniaApp.csproj -c "$CONFIG" -r "$RID" --self-contained true
 
     echo "==> [$ARCH] assembling $APP_NAME"
     STAGE="$DIST_DIR/chatxp-macos-$ARCH"

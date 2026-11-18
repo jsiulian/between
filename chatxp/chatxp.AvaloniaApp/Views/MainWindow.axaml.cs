@@ -2,9 +2,9 @@ using System.Collections.Specialized;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Interactivity;
-using chatxp.App.ViewModels;
+using chatxp.AvaloniaApp.ViewModels;
 
-namespace chatxp.App.Views;
+namespace chatxp.AvaloniaApp.Views;
 
 public partial class MainWindow : Window
 {

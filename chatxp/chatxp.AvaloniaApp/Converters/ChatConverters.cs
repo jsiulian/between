@@ -4,7 +4,7 @@ using Avalonia.Data.Converters;
 using Avalonia.Media;
 using Avalonia.Layout;
 
-namespace chatxp.App.Converters;
+namespace chatxp.AvaloniaApp.Converters;
 
 /// <summary>Message bubble: theme-aware colors per direction (NFR-5). Brushes come
 /// from the theme dictionaries — mine green, theirs neutral — resolved against the

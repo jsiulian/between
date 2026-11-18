@@ -1,9 +1,9 @@
 using System.Diagnostics;
 using chatxp.core;
-using chatxp.App.Services;
+using chatxp.AvaloniaApp.Services;
 using Xunit;
 
-namespace chatxp.App.Tests;
+namespace chatxp.AvaloniaApp.Tests;
 
 /// <summary>
 /// FR-7.3 / FR-7.4 / FR-7.2a: known contacts auto-accept; unknown peers raise a

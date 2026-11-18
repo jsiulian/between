@@ -1,6 +1,6 @@
 using System.Collections.Concurrent;
 
-namespace chatxp.App.Services;
+namespace chatxp.AvaloniaApp.Services;
 
 /// <summary>
 /// UI-facing log sink: thread-safe ring buffer of entries. The Diagnostics tab binds to

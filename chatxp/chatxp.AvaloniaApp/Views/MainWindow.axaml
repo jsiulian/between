@@ -1,15 +1,15 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        xmlns:vm="using:chatxp.App.ViewModels"
-        xmlns:services="using:chatxp.App.Services"
-        xmlns:cnv="using:chatxp.App.Converters"
+        xmlns:vm="using:chatxp.AvaloniaApp.ViewModels"
+        xmlns:services="using:chatxp.AvaloniaApp.Services"
+        xmlns:cnv="using:chatxp.AvaloniaApp.Converters"
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         mc:Ignorable="d" d:DesignWidth="860" d:DesignHeight="620"
-        x:Class="chatxp.App.Views.MainWindow"
+        x:Class="chatxp.AvaloniaApp.Views.MainWindow"
         x:DataType="vm:MainViewModel"
         Title="chatxp — Between, cross-platform"
-        Icon="avares://chatxp.App/Assets/chatxp.ico"
+        Icon="avares://chatxp.AvaloniaApp/Assets/chatxp.ico"
         Width="860" Height="620">
 
     <Design.DataContext>

@@ -18,7 +18,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\chatxp.App\chatxp.App.csproj" />
+    <ProjectReference Include="..\chatxp.AvaloniaApp\chatxp.AvaloniaApp.csproj" />
   </ItemGroup>
 
 </Project>

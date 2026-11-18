@@ -1,7 +1,7 @@
 ﻿using Avalonia;
 using System;
 
-namespace chatxp.App;
+namespace chatxp.AvaloniaApp;
 
 sealed class Program
 {

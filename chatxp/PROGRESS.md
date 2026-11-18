@@ -17,7 +17,7 @@ the requirements + voice-calls Todo.
 | WebRTC manager (SIPSorcery 10.0.17) | `chatxp.Core/WebRTC/WebRtcManager.cs` | EndToEndTests (1) — two peers, encrypted msg |
 | Event wire model (Swift-compatible JSON) | `chatxp.Core/Models/Event.cs` | shape test + E2E |
 | SQLite persistence | `chatxp.Core/Storage/ChatDatabase.cs` | ChatDatabaseTests (8) |
-| Avalonia UI (Connect/Chat tabs) | `chatxp.App/**` | builds; boot smoke test passed |
+| Avalonia UI (Connect/Chat tabs) | `chatxp.AvaloniaApp/**` | builds; boot smoke test passed |
 | Requirements + voice-call Todo | `business-requirements.md` | — |
 
 ## Historical notes — corrections that overturned earlier assumptions (keep!)

@@ -2,9 +2,9 @@ using System;
 using System.Diagnostics.CodeAnalysis;
 using Avalonia.Controls;
 using Avalonia.Controls.Templates;
-using chatxp.App.ViewModels;
+using chatxp.AvaloniaApp.ViewModels;
 
-namespace chatxp.App;
+namespace chatxp.AvaloniaApp;
 
 /// <summary>
 /// Given a view model, returns the corresponding view if possible.

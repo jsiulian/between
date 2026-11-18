@@ -1,6 +1,6 @@
 ﻿using CommunityToolkit.Mvvm.ComponentModel;
 
-namespace chatxp.App.ViewModels;
+namespace chatxp.AvaloniaApp.ViewModels;
 
 public abstract class ViewModelBase : ObservableObject
 {

@@ -1,10 +1,10 @@
 using Avalonia;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Markup.Xaml;
-using chatxp.App.ViewModels;
-using chatxp.App.Views;
+using chatxp.AvaloniaApp.ViewModels;
+using chatxp.AvaloniaApp.Views;
 
-namespace chatxp.App;
+namespace chatxp.AvaloniaApp;
 
 public partial class App : Application
 {

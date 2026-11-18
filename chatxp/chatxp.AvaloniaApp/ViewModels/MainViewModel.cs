@@ -1,11 +1,11 @@
 using System.Collections.ObjectModel;
 using chatxp.core;
 using chatxp.core.Storage;
-using chatxp.App.Services;
+using chatxp.AvaloniaApp.Services;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 
-namespace chatxp.App.ViewModels;
+namespace chatxp.AvaloniaApp.ViewModels;
 
 public partial class MainViewModel : ViewModelBase, IDisposable
 {
@@ -49,7 +49,7 @@ public partial class MainViewModel : ViewModelBase, IDisposable
     public ObservableCollection<ContactView> Contacts { get; } = new();
 
     /// <summary>Pending contact requests — cannot be dismissed without a decision.</summary>
-    public ObservableCollection<chatxp.App.Services.PendingRequestView> Requests { get; } = new();
+    public ObservableCollection<chatxp.AvaloniaApp.Services.PendingRequestView> Requests { get; } = new();
 
     /// <summary>Diagnostic log lines.</summary>
     public ObservableCollection<string> LogLines => _logView;
@@ -138,7 +138,7 @@ public partial class MainViewModel : ViewModelBase, IDisposable
                 c.SignalingServer));
     }
 
-    private static string FormatLogEntry(chatxp.App.Services.DiagnosticLog.Entry entry) =>
+    private static string FormatLogEntry(chatxp.AvaloniaApp.Services.DiagnosticLog.Entry entry) =>
         $"[{entry.Time:HH:mm:ss}] {(entry.Level == "ERROR" ? "ERROR" : "INFO ")}: {entry.Message}";
 
     private static string ShortId(string id) =>

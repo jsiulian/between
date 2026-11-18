@@ -1,0 +1,16 @@
+# Build outputs
+bin/
+obj/
+
+#IDE / IDE per-user state
+*.user
+*.suo
+.vs/
+.idea/
+chatxp.sln.DotSettings.user
+
+# Node (signaling server)
+node_modules/
+
+# Packaging output (DMG builds regenerate these)
+dist/
