@@ -15,9 +15,16 @@ public class SignalingServerSwitchTests : IAsyncLifetime
 {
     private const int TestPort = 3997;
     private Process? _serverProcess;
+    private string? _dataDir;
 
     public async Task InitializeAsync()
     {
+        // Isolate from real user data (contacts/identity/settings): fresh temp dir.
+        _dataDir = Path.Combine(Path.GetTempPath(), $"chatxp-test-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(_dataDir);
+        Environment.SetEnvironmentVariable("CHATXP_DATA_DIR", _dataDir);
+        Environment.SetEnvironmentVariable("CHATXP_SIGNAL_SERVER", null);
+
         var serverDir = Path.GetFullPath(
             Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", "server"));
         if (!File.Exists(Path.Combine(serverDir, "index.js")))
@@ -54,6 +61,13 @@ public class SignalingServerSwitchTests : IAsyncLifetime
             p.Kill(entireProcessTree: true);
         _serverProcess?.WaitForExit(5000);
         _serverProcess?.Dispose();
+        Environment.SetEnvironmentVariable("CHATXP_DATA_DIR", null);
+        try
+        {
+            if (_dataDir is not null && Directory.Exists(_dataDir))
+                Directory.Delete(_dataDir, recursive: true);
+        }
+        catch { /* best-effort cleanup */ }
         return Task.CompletedTask;
     }
 
@@ -112,33 +126,22 @@ public class SignalingServerSwitchTests : IAsyncLifetime
     [Fact]
     public async Task Saved_Server_Is_Persisted_And_Reloaded()
     {
-        // The service persists its choice to settings.txt and a fresh session loads it.
-        var appData = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "chatxp");
-        var settings = Path.Combine(appData, "settings.txt");
+        // The service persists its choice to settings.txt (in the isolated
+        // CHATXP_DATA_DIR test dir) and a fresh session loads it.
+        var settings = Path.Combine(
+            Environment.GetEnvironmentVariable("CHATXP_DATA_DIR")!, "settings.txt");
 
-        // Backup existing user settings so the test never leaves the user's app
-        // pointing at a dead test server.
-        string? backup = File.Exists(settings) ? File.ReadAllText(settings) : null;
-        try
-        {
-            using var session1 = new ChatSessionService($"ws://127.0.0.1:{TestPort}/");
-            var err = await session1.ApplySignalingServerAsync($"ws://127.0.0.1:{TestPort}/s2");
-            Assert.Null(err);
-            Assert.Equal($"ws://127.0.0.1:{TestPort}/s2", session1.SignalingServer);
+        using var session1 = new ChatSessionService($"ws://127.0.0.1:{TestPort}/");
+        var err = await session1.ApplySignalingServerAsync($"ws://127.0.0.1:{TestPort}/s2");
+        Assert.Null(err);
+        Assert.Equal($"ws://127.0.0.1:{TestPort}/s2", session1.SignalingServer);
 
-            Assert.True(File.Exists(settings));
-            Assert.Equal($"ws://127.0.0.1:{TestPort}/s2", File.ReadAllText(settings).Trim());
+        Assert.True(File.Exists(settings));
+        Assert.Equal($"ws://127.0.0.1:{TestPort}/s2", File.ReadAllText(settings).Trim());
 
-            // A fresh session without an explicit server loads the saved one
-            // (precedence: explicit arg > env > saved > default).
-            using var session2 = new ChatSessionService();
-            Assert.Equal($"ws://127.0.0.1:{TestPort}/s2", session2.SignalingServer);
-        }
-        finally
-        {
-            if (backup is not null) File.WriteAllText(settings, backup);
-            else if (File.Exists(settings)) File.Delete(settings);
-        }
+        // A fresh session without an explicit server loads the saved one
+        // (precedence: explicit arg > env > saved > default).
+        using var session2 = new ChatSessionService();
+        Assert.Equal($"ws://127.0.0.1:{TestPort}/s2", session2.SignalingServer);
     }
 }

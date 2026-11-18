@@ -114,8 +114,10 @@
                             <ItemsControl ItemsSource="{Binding Contacts}">
                                 <ItemsControl.ItemTemplate>
                                     <DataTemplate x:DataType="services:ContactView">
-                                        <Border Background="{DynamicResource CardBrush}" CornerRadius="10"
-                                                Padding="12,8" Margin="0,0,0,6">
+                                        <!-- Row visual: base + hover from the app-level
+                                             contactRow styles (theme-aware hover brush). -->
+                                        <Border Classes="contactRow"
+                                                CornerRadius="10" Padding="12,8" Margin="0,0,0,6">
                                             <Grid ColumnDefinitions="*,Auto,Auto,Auto">
                                                 <StackPanel Grid.Column="0" Spacing="2" VerticalAlignment="Center">
                                                     <TextBlock Text="{Binding Nickname}" FontWeight="SemiBold" FontSize="14"/>
@@ -230,7 +232,7 @@
             <Grid RowDefinitions="Auto,*,Auto,Auto">
                 <!-- Who you're talking to + Leave -->
                 <Border Grid.Row="0" Background="{DynamicResource CardBrush}" Padding="12,8">
-                    <Grid ColumnDefinitions="Auto,*,Auto">
+                    <Grid ColumnDefinitions="Auto,*,Auto,Auto">
                         <Button Grid.Column="0" Content="← Contacts" Command="{Binding LeaveChatCommand}"
                                 Padding="10,4" Margin="0,0,10,0"/>
                         <StackPanel Grid.Column="1" Spacing="1" VerticalAlignment="Center">
@@ -238,18 +240,31 @@
                             <TextBlock Text="{Binding ChatWithIdPreview}" FontFamily="Monospace" FontSize="10"
                                        Opacity="0.5"/>
                         </StackPanel>
-                        <TextBlock Grid.Column="2" Text="{Binding ChatConnectionState}" FontSize="11" Opacity="0.6"
+                        <Button Grid.Column="2" Content="⟳ Reconnect" Command="{Binding ReconnectCommand}"
+                                Padding="10,4" Margin="8,0,8,0"/>
+                        <TextBlock Grid.Column="3" Text="{Binding ChatConnectionState}" FontSize="11" Opacity="0.6"
                                    VerticalAlignment="Center"/>
                     </Grid>
                 </Border>
-                <ListBox Grid.Row="1" ItemsSource="{Binding Lines}"
+                <ListBox Grid.Row="1" x:Name="MessagesList" ItemsSource="{Binding Lines}"
                          Background="Transparent"
-                         ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                         SelectionMode="Multiple"
+                         ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                         ScrollViewer.VerticalScrollBarVisibility="Visible">
                     <ListBox.ItemTemplate>
                         <DataTemplate x:DataType="services:ChatLine">
                             <Border CornerRadius="10" Padding="10,6" Margin="4" MaxWidth="440"
                                     Background="{Binding Mine, Converter={StaticResource MineToBackground}}"
                                     HorizontalAlignment="{Binding Mine, Converter={StaticResource MineToAlignment}}">
+                                <Border.ContextMenu>
+                                    <!-- Per-bubble menu: the DataContext here is the ChatLine
+                                         itself, so CommandParameter binds naturally. -->
+                                    <ContextMenu>
+                                        <MenuItem Header="Copy message"
+                                                  Command="{Binding $parent[Window].DataContext.CopyMessageCommand}"
+                                                  CommandParameter="{Binding}"/>
+                                    </ContextMenu>
+                                </Border.ContextMenu>
                                 <StackPanel Spacing="2">
                                     <TextBlock Text="{Binding Text}" TextWrapping="Wrap"
                                                Foreground="{Binding Mine, Converter={StaticResource MineToForeground}}"/>

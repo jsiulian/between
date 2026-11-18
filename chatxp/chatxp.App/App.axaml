@@ -21,6 +21,7 @@
                     <SolidColorBrush x:Key="MutedForeground" Color="#77777f"/>
                     <SolidColorBrush x:Key="PillBrush" Color="#e6e6ee"/>
                     <SolidColorBrush x:Key="CardBrush" Color="#ffffff"/>
+                    <SolidColorBrush x:Key="HoverBrush" Color="#e2e2e8"/>
                     <SolidColorBrush x:Key="FormBrush" Color="#ffffff"/>
                     <SolidColorBrush x:Key="BubbleMineBrush" Color="#2f7d5f"/>
                     <SolidColorBrush x:Key="BubbleMineText" Color="#ffffff"/>
@@ -35,6 +36,7 @@
                     <SolidColorBrush x:Key="MutedForeground" Color="#9a9aa8"/>
                     <SolidColorBrush x:Key="PillBrush" Color="#2d2d3a"/>
                     <SolidColorBrush x:Key="CardBrush" Color="#232330"/>
+                    <SolidColorBrush x:Key="HoverBrush" Color="#32324a"/>
                     <SolidColorBrush x:Key="FormBrush" Color="#20202b"/>
                     <SolidColorBrush x:Key="BubbleMineBrush" Color="#1e5c46"/>
                     <SolidColorBrush x:Key="BubbleMineText" Color="#f0f0f5"/>
@@ -49,5 +51,18 @@
 
     <Application.Styles>
         <FluentTheme />
+
+        <!-- Contact-row card: neutral, theme-aware hover (gray-family) so the
+             pointer-over state reads in BOTH light and dark themes (NFR-5). -->
+        <Style Selector="Border.contactRow">
+            <Setter Property="Background" Value="{DynamicResource CardBrush}"/>
+        </Style>
+        <Style Selector="Border.contactRow:pointerover">
+            <Setter Property="Background" Value="{DynamicResource HoverBrush}"/>
+        </Style>
+        <!-- Cursor affordance on the whole row too. -->
+        <Style Selector="Border.contactRow:pointerover /template/ ContentPresenter">
+            <Setter Property="Cursor" Value="Hand"/>
+        </Style>
     </Application.Styles>
 </Application>

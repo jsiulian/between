@@ -6,9 +6,13 @@ namespace chatxp.App.Services;
 
 public sealed class ChatSessionService : IDisposable
 {
-    private static readonly string AppDataDir = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-        "chatxp");
+    /// <summary>App data dir (DB, identity, settings). Overridable via
+    /// CHATXP_DATA_DIR — used by tests to avoid touching the real user data.
+    /// Resolved PER CONSTRUCTION (not static-once) so env changes between
+    /// constructions in the same process take effect.</summary>
+    private static string ResolveAppDataDir() =>
+        Environment.GetEnvironmentVariable("CHATXP_DATA_DIR")
+        ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "chatxp");
 
     private const string KeyFileName = "identity.key";
     private const string DbFileName = "chatxp.db";
@@ -26,15 +30,20 @@ public sealed class ChatSessionService : IDisposable
     /// on accept, so future reconnections route via the same server).</summary>
     private string? _pendingRequestServer;
 
-    private readonly string _keyPath = Path.Combine(AppDataDir, KeyFileName);
-    private readonly string _settingsPath = Path.Combine(AppDataDir, SettingsFileName);
+    private readonly string _appDataDir = ResolveAppDataDir();
+    private readonly string _keyPath;
+    private readonly string _settingsPath;
+    private readonly string _dbPath;
 
     public ChatSessionService(string? signalingServer = null)
     {
-        Directory.CreateDirectory(AppDataDir);
+        _keyPath = Path.Combine(_appDataDir, KeyFileName);
+        _settingsPath = Path.Combine(_appDataDir, SettingsFileName);
+        _dbPath = Path.Combine(_appDataDir, DbFileName);
+        Directory.CreateDirectory(_appDataDir);
 
         Crypto = LoadOrCreateIdentity();
-        Database = new ChatDatabase(Path.Combine(AppDataDir, DbFileName));
+        Database = new ChatDatabase(_dbPath);
 
         SignalingServer = signalingServer
             ?? System.Environment.GetEnvironmentVariable("CHATXP_SIGNAL_SERVER")
@@ -321,7 +330,7 @@ public sealed class ChatSessionService : IDisposable
 
     private E2eeCrypto LoadOrCreateIdentity()
     {
-        var keyPath = Path.Combine(AppDataDir, KeyFileName);
+        var keyPath = _keyPath;
         if (File.Exists(keyPath))
         {
             try

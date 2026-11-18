@@ -131,7 +131,7 @@ implements **text chat only** for v1 (see below).
 - FR-8.4 The screen is designed to host other notification types in the future.
   Status: ✅ scaffolded (single ItemsControl for requests; placeholder note).
 
-### FR-9 Message timestamps ⏳ **in progress (2026-11-17)**
+### FR-9 Message timestamps ⏳ **in progress (2026-11-18)**
 - FR-9.1 **Display**: every message bubble shows its local timestamp (HH:mm).
   Status: ✅ done (bubble footer; both sent and received lines).
 - FR-9.2 **Wire format (current state, documented — not yet changed)**: the `Event`
@@ -142,6 +142,18 @@ implements **text chat only** for v1 (see below).
   *Recommendation (not implemented): add an optional `sentAt` field to `Event` —
   Swift Codable ignores unknown fields, so it is forward-compatible with the iOS
   app — and use `sentAt` when present, local receive time otherwise.*
+
+### FR-10 Chat surface behaviors ⏳ **(2026-11-18)**
+- FR-10.1 **Auto-scroll**: the message list scrolls to the newest line whenever a
+  message is appended (sent or received) and when a conversation with history is
+  opened. Status: ✅ done (view watches the Lines collection; ScrollIntoView on add).
+- FR-10.2 **Copy message**: a context menu on a chat line copies its text to the
+  clipboard. Status: ✅ done (ContextMenu → CopyMessage; selection enabled so the
+  conventional selection+⌘C also works on selectable text).
+- FR-10.3 **Reconnect**: a Reconnect control in the chat header tears down any
+  remaining state and re-offers to the peer via the contact's stored signaling
+  server (per-contact routing). Status: ✅ done (ReconnectCommand →
+  ConnectToContactAsync).
 
 ## 3. Non-functional requirements
 

@@ -270,6 +270,7 @@ public partial class MainViewModel : ViewModelBase, IDisposable
         var nickname = _session.NicknameFor(peerId) ?? ShortId(peerId);
         ChatWith = nickname;
         ChatWithIdPreview = ShortId(peerId);
+        _activeChatPeerId = peerId;
         Lines.Clear();
         if (loadHistory)
         {
@@ -279,6 +280,7 @@ public partial class MainViewModel : ViewModelBase, IDisposable
                     row.TimestampUnixMs, row.ReplyingTo));
         }
         HasActiveChat = true;
+        _pendingScroll = true; // history loaded → scroll to the newest line
     }
 
     /// <summary>Closes the chat surface and returns to contacts (connection is kept —
@@ -288,6 +290,51 @@ public partial class MainViewModel : ViewModelBase, IDisposable
     {
         HasActiveChat = false;
         ChatConnectionState = "offline";
+    }
+
+    /// <summary>The peer the open chat overlay belongs to (null when closed).</summary>
+    private string? _activeChatPeerId;
+
+    /// <summary>Signals the view that a scroll-to-bottom is pending (history load).
+    /// The view also watches Lines.CollectionChanged for live appends.</summary>
+    private bool _pendingScroll;
+
+    /// <summary>Full reconnect for the open chat: teardown + fresh offer via the
+    /// contact's stored (per-contact) signaling server. Works whether the old
+    /// connection is dead (leftover state cleared) or alive (re-handshake).</summary>
+    [RelayCommand]
+    private async Task ReconnectAsync()
+    {
+        if (_activeChatPeerId is null) return;
+        Status = "Reconnecting…";
+        ChatConnectionState = "connecting…";
+        await _session.ConnectToContactAsync(_activeChatPeerId);
+    }
+
+    /// <summary>Copies a chat line's text to the clipboard (ContextMenu on bubbles).</summary>
+    [RelayCommand]
+    private async Task CopyMessageAsync(ChatLine line)
+    {
+        try
+        {
+            var clipboard = (Avalonia.Application.Current?.ApplicationLifetime
+                as Avalonia.Controls.ApplicationLifetimes.IClassicDesktopStyleApplicationLifetime)
+                ?.MainWindow?.Clipboard;
+            if (clipboard is null)
+            {
+                Status = "Clipboard unavailable";
+                return;
+            }
+            var transfer = new Avalonia.Input.DataTransfer();
+            var item = new Avalonia.Input.DataTransferItem();
+            item.SetText(line.Text);
+            transfer.Add(item);
+            await clipboard.SetDataAsync(transfer);
+        }
+        catch (Exception ex)
+        {
+            Status = $"Copy failed: {ex.Message}";
+        }
     }
 
     // ------------------------------------------------------------ requests

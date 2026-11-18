@@ -6,20 +6,25 @@ using Xunit;
 namespace chatxp.App.Tests;
 
 /// <summary>
-/// FR-7.3 / FR-7.4 / FR-8.2: known contacts auto-accept; unknown peers raise a
-/// request that requires an explicit decision. Verified against the real Node.js
-/// signaling server with two full sessions (real identities + databases are used
-/// from temp homes; the app-data dir is fixed per-user, so these tests back up
-/// and restore the user's real settings file like SignalingServerSwitchTests).
+/// FR-7.3 / FR-7.4 / FR-7.2a: known contacts auto-accept; unknown peers raise a
+/// request that requires an explicit decision; per-contact server routing.
+/// Verified against the real Node.js signaling server. Sessions run with
+/// CHATXP_DATA_DIR pointed at a fresh temp dir so the REAL user data (contacts,
+/// identity, settings) is never touched — no more "alice-friend" in your app.
 /// </summary>
 [Collection("app-session")]
 public class ContactRequestTests : IAsyncLifetime
 {
     private const int TestPort = 3995;
     private Process? _serverProcess;
+    private string? _dataDir;
 
     public async Task InitializeAsync()
     {
+        _dataDir = Path.Combine(Path.GetTempPath(), $"chatxp-test-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(_dataDir);
+        Environment.SetEnvironmentVariable("CHATXP_DATA_DIR", _dataDir);
+        Environment.SetEnvironmentVariable("CHATXP_SIGNAL_SERVER", null);
         var serverDir = Path.GetFullPath(
             Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", "server"));
         var psi = new ProcessStartInfo
@@ -53,6 +58,13 @@ public class ContactRequestTests : IAsyncLifetime
             p.Kill(entireProcessTree: true);
         _serverProcess?.WaitForExit(5000);
         _serverProcess?.Dispose();
+        Environment.SetEnvironmentVariable("CHATXP_DATA_DIR", null);
+        try
+        {
+            if (_dataDir is not null && Directory.Exists(_dataDir))
+                Directory.Delete(_dataDir, recursive: true);
+        }
+        catch { /* best-effort cleanup */ }
         return Task.CompletedTask;
     }
 
