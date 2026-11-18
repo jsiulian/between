@@ -17,10 +17,16 @@ public partial class MainViewModel : ViewModelBase, IDisposable
     [ObservableProperty] private string _signalServer = "";
     [ObservableProperty] private bool _applyingServer;
     [ObservableProperty] private bool _peerIsTyping;
-    [ObservableProperty] private string _chatHeader = "Chat";
     [ObservableProperty] private bool _hasActiveChat;
     [ObservableProperty] private bool _isNewContactFormOpen;
     [ObservableProperty] private bool _isEditContactFormOpen;
+
+    /// <summary>Nickname of the peer in the open chat (overlay header).</summary>
+    [ObservableProperty] private string _chatWith = "";
+    /// <summary>Short key preview of the chat peer.</summary>
+    [ObservableProperty] private string _chatWithIdPreview = "";
+    /// <summary>Connection state shown in the chat header ("connecting…", "connected"…).</summary>
+    [ObservableProperty] private string _chatConnectionState = "offline";
 
     // Add/Edit contact form fields (shared form state).
     [ObservableProperty] private string _formNickname = "";
@@ -69,13 +75,13 @@ public partial class MainViewModel : ViewModelBase, IDisposable
                 _ => state,
             };
             IsConnected = _session.WebRtc.IsPeerConnected;
+            ChatConnectionState = IsConnected ? "connected" : Status.ToLowerInvariant();
         });
 
         _session.WebRtc.OnDisconnected += reason => OnUi(() =>
         {
             _logView.Add($"[{DateTimeOffset.Now:HH:mm:ss}] ENDED: {reason}");
-            HasActiveChat = false;
-            ChatHeader = "Chat";
+            ChatConnectionState = "disconnected";
         });
 
         // Contact requests land in the Notifications area and STAY until decided.
@@ -86,15 +92,14 @@ public partial class MainViewModel : ViewModelBase, IDisposable
             Status = "New contact request — see Notifications";
         });
 
-        // When the auto-accept path (known contact) connects, open the chat.
+        // Incoming messages: append the line; if this is a conversation arriving
+        // without an explicitly open chat (auto-accept path), open the overlay too.
         _session.MessageReceived += tuple => OnUi(() =>
         {
-            // Find the contact nickname for the chat header.
             var peer = tuple.row.From == _session.Crypto.Base64PublicKey
                 ? tuple.row.To : tuple.row.From;
-            var nickname = _session.NicknameFor(peer) ?? ShortId(peer);
-            ChatHeader = $"Chat with {nickname}";
-            HasActiveChat = true;
+            if (!HasActiveChat)
+                OpenChatWith(peer, loadHistory: true);
             Lines.Add(new ChatLine(tuple.row.Id, tuple.row.EventId, tuple.plaintext,
                 false, tuple.row.TimestampUnixMs, tuple.row.ReplyingTo));
             PeerIsTyping = false;
@@ -222,8 +227,9 @@ public partial class MainViewModel : ViewModelBase, IDisposable
             string.IsNullOrWhiteSpace(FormServer) ? null : FormServer.Trim());
         IsEditContactFormOpen = false;
         RefreshContacts();
+        // If we're chatting with the renamed contact, update the overlay header.
         if (_session.ConnectedPeerId == EditingContactId)
-            ChatHeader = $"Chat with {FormNickname}";
+            ChatWith = FormNickname;
     }
 
     /// <summary>Server field is optional (blank = default) but must be a ws:// URL if given.</summary>
@@ -251,17 +257,37 @@ public partial class MainViewModel : ViewModelBase, IDisposable
     [RelayCommand]
     private async Task ConnectToContact(string peerId)
     {
-        var nickname = _session.NicknameFor(peerId) ?? ShortId(peerId);
-        ChatHeader = $"Chat with {nickname}";
-        HasActiveChat = true;
-        Lines.Clear();
-        // Load stored (encrypted) history and decrypt for display.
-        foreach (var (row, plaintext) in _session.LoadHistory(peerId))
-            Lines.Add(new ChatLine(row.Id, row.EventId, plaintext,
-                row.From == _session.Crypto.Base64PublicKey,
-                row.TimestampUnixMs, row.ReplyingTo));
+        OpenChatWith(peerId, loadHistory: true);
         Status = "Connecting…";
+        ChatConnectionState = "connecting…";
         await _session.ConnectToContactAsync(peerId);
+    }
+
+    /// <summary>Opens the chat overlay for a peer: sets the header (who you're
+    /// talking to), loads stored history, and shows the surface.</summary>
+    private void OpenChatWith(string peerId, bool loadHistory)
+    {
+        var nickname = _session.NicknameFor(peerId) ?? ShortId(peerId);
+        ChatWith = nickname;
+        ChatWithIdPreview = ShortId(peerId);
+        Lines.Clear();
+        if (loadHistory)
+        {
+            foreach (var (row, plaintext) in _session.LoadHistory(peerId))
+                Lines.Add(new ChatLine(row.Id, row.EventId, plaintext,
+                    row.From == _session.Crypto.Base64PublicKey,
+                    row.TimestampUnixMs, row.ReplyingTo));
+        }
+        HasActiveChat = true;
+    }
+
+    /// <summary>Closes the chat surface and returns to contacts (connection is kept —
+    /// it will auto-resume when the peer's next message arrives).</summary>
+    [RelayCommand]
+    private void LeaveChat()
+    {
+        HasActiveChat = false;
+        ChatConnectionState = "offline";
     }
 
     // ------------------------------------------------------------ requests
@@ -281,18 +307,14 @@ public partial class MainViewModel : ViewModelBase, IDisposable
     private async Task AcceptRequest(string peerId)
     {
         Requests.Remove(Requests.FirstOrDefault(r => r.PeerId == peerId)!);
-        // First-time accept: nickname unknown — use a default and let the user
-        // rename later from Contacts. (Requirement: contact exists to resume chats.)
+        // First-time accept: nickname unknown — use a default the user can rename
+        // later from Contacts. The request's origin server is stored as the
+        // contact's server (per-contact routing).
         var nickname = _session.NicknameFor(peerId) ?? $"Contact-{ShortId(peerId)}";
         _session.AcceptContactRequest(peerId, nickname);
         RefreshContacts();
-        ChatHeader = $"Chat with {nickname}";
-        HasActiveChat = true;
-        Lines.Clear();
-        foreach (var (row, plaintext) in _session.LoadHistory(peerId))
-            Lines.Add(new ChatLine(row.Id, row.EventId, plaintext,
-                row.From == _session.Crypto.Base64PublicKey,
-                row.TimestampUnixMs, row.ReplyingTo));
+        OpenChatWith(peerId, loadHistory: true);
+        ChatConnectionState = "connecting…";
         await Task.CompletedTask;
     }
 
@@ -365,7 +387,7 @@ public partial class MainViewModel : ViewModelBase, IDisposable
         try
         {
             var error = await _session.ApplySignalingServerAsync(SignalServer);
-            Status = error ?? $"Signaling server set to {ShortId(SignalServer)}";
+            Status = error ?? $"Registered on {ShortId(SignalServer)}";
         }
         finally
         {

@@ -1,18 +1,47 @@
 using System.Globalization;
+using Avalonia;
 using Avalonia.Data.Converters;
 using Avalonia.Media;
 using Avalonia.Layout;
 
 namespace chatxp.App.Converters;
 
-/// <summary>Message bubble styling: my messages green+right, peer's dark+left.</summary>
+/// <summary>Message bubble: theme-aware colors per direction (NFR-5). Brushes come
+/// from the theme dictionaries — mine green, theirs neutral — resolved against the
+/// current app theme, so both light and dark modes are readable.</summary>
 public sealed class MineToBackgroundConverter : IValueConverter
 {
-    private static readonly IBrush Mine = new SolidColorBrush(Color.FromRgb(0x1e, 0x5c, 0x46));
-    private static readonly IBrush Theirs = new SolidColorBrush(Color.FromRgb(0x26, 0x26, 0x33));
+    public static readonly MineToBackgroundConverter Instance = new();
+    public static readonly MineToBackgroundConverter Reverse = new() { _reverse = true };
+    private bool _reverse;
 
-    public object? Convert(object? value, Type targetType, object? parameter, CultureInfo culture) =>
-        value is true ? Mine : Theirs;
+    public object? Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
+    {
+        var mine = value is true;
+        if (_reverse) mine = !mine;
+        var key = mine ? "BubbleMineBrush" : "BubbleTheirsBrush";
+        if (App.Current?.TryGetResource(key, null, out var brush) == true && brush is IBrush b)
+            return b;
+        return Brushes.Transparent;
+    }
+
+    public object? ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture) =>
+        throw new NotSupportedException();
+}
+
+/// <summary>Bubble text color: theme-aware per direction (contrasts with the
+/// bubble background brushes).</summary>
+public sealed class MineToForegroundConverter : IValueConverter
+{
+    public static readonly MineToForegroundConverter Instance = new();
+
+    public object? Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
+    {
+        var key = value is true ? "BubbleMineText" : "BubbleTheirsText";
+        if (App.Current?.TryGetResource(key, null, out var brush) == true && brush is IBrush b)
+            return b;
+        return Brushes.Black;
+    }
 
     public object? ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture) =>
         throw new NotSupportedException();

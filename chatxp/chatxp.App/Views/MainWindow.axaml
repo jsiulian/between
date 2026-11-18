@@ -18,48 +18,54 @@
 
     <Window.Resources>
         <cnv:MineToBackgroundConverter x:Key="MineToBackground" />
+        <cnv:MineToForegroundConverter x:Key="MineToForeground" />
         <cnv:MineToAlignmentConverter x:Key="MineToAlignment" />
         <cnv:BoolToBrushConverter x:Key="BoolToBrush" />
         <cnv:CountIsConverter x:Key="CountIs" />
     </Window.Resources>
 
     <Grid RowDefinitions="Auto,*,Auto">
-        <!-- Header -->
-        <Border Grid.Row="0" Background="#1b1b23" Padding="14,10">
+        <!-- Header (themed chrome) -->
+        <Border Grid.Row="0" Background="{DynamicResource ChromeBrush}" Padding="14,10">
             <Grid ColumnDefinitions="*,Auto,Auto">
                 <StackPanel Grid.Column="0" Spacing="2">
-                    <TextBlock Text="My ID" FontSize="11" Opacity="0.6" Foreground="White"/>
+                    <TextBlock Text="My ID" FontSize="11" Opacity="0.6"
+                               Foreground="{DynamicResource MutedForeground}"/>
                     <Button Command="{Binding CopyMyIdCommand}" Padding="0" Background="Transparent"
                             BorderThickness="0" HorizontalAlignment="Left" Cursor="Hand">
                         <TextBlock Text="{Binding MyId}" FontFamily="Monospace" FontSize="11"
-                                   Foreground="#8ab4ff" TextTrimming="CharacterEllipsis" MaxWidth="440"/>
+                                   Foreground="{DynamicResource IdLinkBrush}"
+                                   TextTrimming="CharacterEllipsis" MaxWidth="440"/>
                     </Button>
                 </StackPanel>
                 <!-- Notifications badge -->
-                <Button Grid.Column="1" Content="Notifications" Command="{Binding ShowNotificationsCommand}"
-                        Classes="navTab" Margin="0,0,8,0" Padding="10,4">
+                <Button Grid.Column="1" Command="{Binding ShowNotificationsCommand}"
+                        Margin="0,0,8,0" Padding="0">
                     <Button.Template>
                         <ControlTemplate TargetType="Button">
-                            <Border Background="#2d2d3a" CornerRadius="12" Padding="10,4"
-                                    IsVisible="{TemplateBinding IsEnabled}">
+                            <Border Background="{DynamicResource PillBrush}" CornerRadius="12"
+                                    Padding="10,4" IsVisible="{TemplateBinding IsEnabled}">
                                 <StackPanel Orientation="Horizontal" Spacing="6">
                                     <TextBlock Text="🔔" FontSize="13"/>
-                                    <TextBlock Text="{Binding Requests.Count}" Foreground="White" FontSize="12"/>
+                                    <TextBlock Text="{Binding Requests.Count}"
+                                               Foreground="{DynamicResource ChromeForeground}" FontSize="12"/>
                                 </StackPanel>
                             </Border>
                         </ControlTemplate>
                     </Button.Template>
                 </Button>
-                <Border Grid.Column="2" CornerRadius="12" Background="#2d2d3a" Padding="10,4" VerticalAlignment="Center">
-                    <TextBlock Text="{Binding Status}" Foreground="White" FontSize="12"/>
+                <Border Grid.Column="2" CornerRadius="12" Background="{DynamicResource PillBrush}"
+                        Padding="10,4" VerticalAlignment="Center">
+                    <TextBlock Text="{Binding Status}" Foreground="{DynamicResource ChromeForeground}"
+                               FontSize="12"/>
                 </Border>
             </Grid>
         </Border>
 
-        <!-- Main tabs -->
+        <!-- ===== Main surface: tabs (no Chat tab). The chat is an overlay. ===== -->
         <TabControl Grid.Row="1" x:Name="MainTabs">
 
-            <!-- ============ Contacts ============ -->
+            <!-- ===== Contacts ===== -->
             <TabItem Header="Contacts">
                 <Grid RowDefinitions="Auto,*">
                     <StackPanel Grid.Row="0" Orientation="Horizontal" Spacing="10" Margin="16,12,16,0">
@@ -71,13 +77,14 @@
                         <StackPanel Spacing="8" Margin="16,10,16,16">
                             <!-- Add-contact form (mandatory nickname; optional per-contact server) -->
                             <Border IsVisible="{Binding IsNewContactFormOpen}"
-                                    Background="#20202b" CornerRadius="10" Padding="14">
+                                    Background="{DynamicResource FormBrush}" CornerRadius="10" Padding="14">
                                 <StackPanel Spacing="8">
                                     <TextBlock Text="New contact" FontWeight="Bold"/>
                                     <TextBox Text="{Binding FormPeerId}" PlaceholderText="Peer ID (their public key)…"/>
                                     <TextBox Text="{Binding FormNickname}" PlaceholderText="Nickname (required)…"/>
                                     <TextBox Text="{Binding FormServer}" PlaceholderText="Signaling server for this contact (ws://…; blank = current server)…"/>
-                                    <TextBlock Text="{Binding FormError}" Foreground="#ff6b6b" FontSize="11"
+                                    <TextBlock Text="{Binding FormError}" Foreground="{DynamicResource DangerBrush}"
+                                               FontSize="11"
                                                IsVisible="{Binding FormError, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
                                     <StackPanel Orientation="Horizontal" Spacing="8">
                                         <Button Content="Save" Command="{Binding SaveNewContactCommand}" Padding="14,4"/>
@@ -87,12 +94,13 @@
                             </Border>
                             <!-- Edit-contact form -->
                             <Border IsVisible="{Binding IsEditContactFormOpen}"
-                                    Background="#20202b" CornerRadius="10" Padding="14">
+                                    Background="{DynamicResource FormBrush}" CornerRadius="10" Padding="14">
                                 <StackPanel Spacing="8">
                                     <TextBlock Text="Edit contact" FontWeight="Bold"/>
                                     <TextBox Text="{Binding FormNickname}" PlaceholderText="Nickname…"/>
                                     <TextBox Text="{Binding FormServer}" PlaceholderText="Signaling server (ws://…; blank = current server)…"/>
-                                    <TextBlock Text="{Binding FormError}" Foreground="#ff6b6b" FontSize="11"
+                                    <TextBlock Text="{Binding FormError}" Foreground="{DynamicResource DangerBrush}"
+                                               FontSize="11"
                                                IsVisible="{Binding FormError, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
                                     <StackPanel Orientation="Horizontal" Spacing="8">
                                         <Button Content="Save" Command="{Binding SaveEditContactCommand}" Padding="14,4"/>
@@ -106,7 +114,8 @@
                             <ItemsControl ItemsSource="{Binding Contacts}">
                                 <ItemsControl.ItemTemplate>
                                     <DataTemplate x:DataType="services:ContactView">
-                                        <Border Background="#232330" CornerRadius="10" Padding="12,8" Margin="0,0,0,6">
+                                        <Border Background="{DynamicResource CardBrush}" CornerRadius="10"
+                                                Padding="12,8" Margin="0,0,0,6">
                                             <Grid ColumnDefinitions="*,Auto,Auto,Auto">
                                                 <StackPanel Grid.Column="0" Spacing="2" VerticalAlignment="Center">
                                                     <TextBlock Text="{Binding Nickname}" FontWeight="SemiBold" FontSize="14"/>
@@ -135,40 +144,7 @@
                 </Grid>
             </TabItem>
 
-            <!-- ============ Chat ============ -->
-            <TabItem Header="Chat">
-                <Grid RowDefinitions="Auto,*,Auto,Auto" IsEnabled="{Binding HasActiveChat}">
-                    <TextBlock Grid.Row="0" Text="{Binding ChatHeader}" FontSize="15" FontWeight="SemiBold"
-                               Margin="16,10,16,4"/>
-                    <ListBox Grid.Row="1" ItemsSource="{Binding Lines}"
-                             ScrollViewer.HorizontalScrollBarVisibility="Disabled">
-                        <ListBox.ItemTemplate>
-                            <DataTemplate x:DataType="services:ChatLine">
-                                <Border CornerRadius="10" Padding="10,6" Margin="4" MaxWidth="440"
-                                        Background="{Binding Mine, Converter={StaticResource MineToBackground}}"
-                                        HorizontalAlignment="{Binding Mine, Converter={StaticResource MineToAlignment}}">
-                                    <StackPanel Spacing="2">
-                                        <TextBlock Text="{Binding Text}" TextWrapping="Wrap" Foreground="#f0f0f5"/>
-                                        <!-- Sent-time stamp (sender's local clock; see FR-7.2 note) -->
-                                        <TextBlock Text="{Binding Time}" FontSize="9" Opacity="0.55"
-                                                   Foreground="#d8d8e2"/>
-                                    </StackPanel>
-                                </Border>
-                            </DataTemplate>
-                        </ListBox.ItemTemplate>
-                    </ListBox>
-                    <TextBlock Grid.Row="2" Text="peer is typing…" FontStyle="Italic" Opacity="0.6"
-                               IsVisible="{Binding PeerIsTyping}" Margin="14,2"/>
-                    <Grid Grid.Row="3" ColumnDefinitions="*,Auto" Margin="10">
-                        <TextBox Grid.Column="0" Text="{Binding InputText}" PlaceholderText="Message…"
-                                 KeyDown="OnInputKeyDown"/>
-                        <Button Grid.Column="1" Content="Send" Command="{Binding SendCommand}"
-                                Margin="8,0,0,0" Padding="14,4"/>
-                    </Grid>
-                </Grid>
-            </TabItem>
-
-            <!-- ============ Notifications ============ -->
+            <!-- ===== Notifications ===== -->
             <TabItem Header="Notifications">
                 <ScrollViewer>
                     <StackPanel Spacing="10" Margin="16">
@@ -180,16 +156,17 @@
                         <ItemsControl ItemsSource="{Binding Requests}">
                             <ItemsControl.ItemTemplate>
                                 <DataTemplate x:DataType="services:PendingRequestView">
-                                    <Border Background="#33231f" CornerRadius="10" Padding="14,10" Margin="0,0,0,8">
+                                    <Border Background="{DynamicResource CardBrush}" CornerRadius="10"
+                                            Padding="14,10" Margin="0,0,0,8">
                                         <StackPanel Spacing="8">
                                             <TextBlock FontFamily="Monospace" FontSize="11" Text="{Binding PeerId}"
                                                        TextTrimming="CharacterEllipsis"/>
                                             <TextBlock Text="wants to chat" Opacity="0.6" FontSize="12"/>
                                             <StackPanel Orientation="Horizontal" Spacing="8">
-                                                <Button Content="Accept" Classes="success"
+                                                <Button Content="Accept"
                                                         Command="{Binding $parent[Window].DataContext.AcceptRequestCommand}"
                                                         CommandParameter="{Binding PeerId}" Padding="16,5"/>
-                                                <Button Content="Ignore" Classes="danger"
+                                                <Button Content="Ignore"
                                                         Command="{Binding $parent[Window].DataContext.IgnoreRequestCommand}"
                                                         CommandParameter="{Binding PeerId}" Padding="16,5"/>
                                             </StackPanel>
@@ -205,20 +182,29 @@
                 </ScrollViewer>
             </TabItem>
 
-            <!-- ============ Settings ============ -->
+            <!-- ===== Settings ===== -->
             <TabItem Header="Settings">
                 <ScrollViewer>
                     <StackPanel Spacing="10" Margin="20">
+                        <TextBlock Text="My registration server" FontSize="16" FontWeight="Bold"/>
+                        <TextBlock TextWrapping="Wrap" Opacity="0.7"
+                                   Text="This is the signaling server you are registered (reachable) on — new contacts send their connection requests here. Changing it re-registers you immediately and becomes the default for future starts."/>
+                        <Grid ColumnDefinitions="*,Auto">
+                            <TextBox Grid.Column="0" Text="{Binding SignalServer}" PlaceholderText="ws://host:port/"/>
+                            <Button Grid.Column="1" Content="Register" Margin="8,0,0,0" Padding="14,4"
+                                    Command="{Binding ApplyServerCommand}"
+                                    IsEnabled="{Binding !ApplyingServer}"/>
+                        </Grid>
+                        <Separator/>
                         <Button Content="Copy my ID" Command="{Binding CopyMyIdCommand}"
                                 HorizontalAlignment="Left" Padding="10,4"/>
-                        <Separator/>
                         <TextBlock TextWrapping="Wrap" Opacity="0.5" FontSize="11"
-                                   Text="Signaling servers are configured per contact (Contacts → add/edit)."/>
+                                   Text="Per-contact servers: Contacts → add/edit (used when connecting to that contact)."/>
                     </StackPanel>
                 </ScrollViewer>
             </TabItem>
 
-            <!-- ============ Diagnostics ============ -->
+            <!-- ===== Diagnostics ===== -->
             <TabItem Header="Diagnostics">
                 <Grid RowDefinitions="Auto,*" Margin="8">
                     <StackPanel Grid.Row="0" Orientation="Horizontal" Spacing="8" Margin="4,2">
@@ -239,8 +225,55 @@
             </TabItem>
         </TabControl>
 
-        <!-- Footer -->
-        <Border Grid.Row="2" Padding="14,8" Background="#1b1b23">
+        <!-- ===== Chat overlay: replaces the tab surface when a chat is open. ===== -->
+        <Panel Grid.Row="1" IsVisible="{Binding HasActiveChat}" Background="{DynamicResource ChromeBrush}">
+            <Grid RowDefinitions="Auto,*,Auto,Auto">
+                <!-- Who you're talking to + Leave -->
+                <Border Grid.Row="0" Background="{DynamicResource CardBrush}" Padding="12,8">
+                    <Grid ColumnDefinitions="Auto,*,Auto">
+                        <Button Grid.Column="0" Content="← Contacts" Command="{Binding LeaveChatCommand}"
+                                Padding="10,4" Margin="0,0,10,0"/>
+                        <StackPanel Grid.Column="1" Spacing="1" VerticalAlignment="Center">
+                            <TextBlock Text="{Binding ChatWith}" FontSize="15" FontWeight="SemiBold"/>
+                            <TextBlock Text="{Binding ChatWithIdPreview}" FontFamily="Monospace" FontSize="10"
+                                       Opacity="0.5"/>
+                        </StackPanel>
+                        <TextBlock Grid.Column="2" Text="{Binding ChatConnectionState}" FontSize="11" Opacity="0.6"
+                                   VerticalAlignment="Center"/>
+                    </Grid>
+                </Border>
+                <ListBox Grid.Row="1" ItemsSource="{Binding Lines}"
+                         Background="Transparent"
+                         ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                    <ListBox.ItemTemplate>
+                        <DataTemplate x:DataType="services:ChatLine">
+                            <Border CornerRadius="10" Padding="10,6" Margin="4" MaxWidth="440"
+                                    Background="{Binding Mine, Converter={StaticResource MineToBackground}}"
+                                    HorizontalAlignment="{Binding Mine, Converter={StaticResource MineToAlignment}}">
+                                <StackPanel Spacing="2">
+                                    <TextBlock Text="{Binding Text}" TextWrapping="Wrap"
+                                               Foreground="{Binding Mine, Converter={StaticResource MineToForeground}}"/>
+                                    <TextBlock Text="{Binding Time}" FontSize="9" Opacity="0.55"
+                                               Foreground="{Binding Mine, Converter={StaticResource MineToForeground}}"/>
+                                </StackPanel>
+                            </Border>
+                        </DataTemplate>
+                    </ListBox.ItemTemplate>
+                </ListBox>
+                <TextBlock Grid.Row="2" Text="peer is typing…" FontStyle="Italic" Opacity="0.6"
+                           IsVisible="{Binding PeerIsTyping}" Margin="14,2"/>
+                <Grid Grid.Row="3" ColumnDefinitions="*,Auto" Margin="10">
+                    <TextBox Grid.Column="0" Text="{Binding InputText}" PlaceholderText="Message…"
+                             KeyDown="OnInputKeyDown"
+                             IsEnabled="{Binding IsConnected}"/>
+                    <Button Grid.Column="1" Content="Send" Command="{Binding SendCommand}"
+                            Margin="8,0,0,0" Padding="14,4" IsEnabled="{Binding IsConnected}"/>
+                </Grid>
+            </Grid>
+        </Panel>
+
+        <!-- Footer (themed chrome) -->
+        <Border Grid.Row="2" Padding="14,8" Background="{DynamicResource ChromeBrush}">
             <StackPanel Orientation="Horizontal" Spacing="12">
                 <Ellipse Width="10" Height="10" VerticalAlignment="Center">
                     <Ellipse.Fill>
@@ -250,9 +283,8 @@
                     </Ellipse.Fill>
                 </Ellipse>
                 <TextBlock Text="{Binding ConnectionLabel}" FontSize="11"
-                           Foreground="#e8e8f0"/>
+                           Foreground="{DynamicResource ChromeForeground}"/>
             </StackPanel>
         </Border>
     </Grid>
-
 </Window>

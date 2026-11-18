@@ -33,9 +33,11 @@ the two devices' identity keys; the signaling server cannot decrypt anything.
 - FR-1.3 The user can view and copy their Base64 public key ("their ID").
 
 ### FR-2 Signaling
-- FR-2.1 The app connects to a signaling server and registers its identity. Since
-  2026-11-17 the server is **per contact** (FR-7.2a); the startup server (saved
-  setting or default `ws://150.230.37.157:3030/`) is what first-time offers arrive on.
+- FR-2.1 The app connects to a signaling server and registers its identity. The
+  **registration server** (Settings → "My registration server" → Register; persisted
+  as the startup default, default `ws://150.230.37.157:3030/`) is where the user is
+  *reachable*: new contacts' connection requests arrive there. Since 2026-11-17 the
+  server used to *reach a specific peer* is **per contact** (FR-7.2a). Status: ✅ done.
 - FR-2.2 The app interoperates with the existing Node.js signaling server
   (`server/index.js`): register, offer/answer/candidate forwarding by target id,
   `not_found` replies, `reject` propagation. **The server is not ported** — it is
@@ -92,12 +94,13 @@ implements **text chat only** for v1 (see below).
 - FR-7.2a **Per-contact signaling server** (2026-11-17 addition): each contact
   optionally carries its own signaling-server URL (ws://…). Connecting to, or
   auto-accepting a request from, that contact routes via the contact's stored
-  server; blank = the currently-active/default server. First-time requests record
-  the server the offer arrived on, so the accepted contact reconnects via the same
-  server thereafter. The Settings page no longer offers a server field (kept empty)
-  — servers are configured per contact in add/edit. Status: ✅ done (schema column
-  `contacts.signaling_server` with migration for existing DBs; forms; routing in
-  `ConnectToContactAsync`/`HandleIncomingConnection`/`AcceptContactRequest`;
+  server; blank = the currently-active/registration server (FR-2.1). First-time
+  requests record the server the offer arrived on, so the accepted contact
+  reconnects via the same server thereafter. The Settings page hosts the user's
+  registration server ("My registration server" → Register), distinct from
+  per-contact servers (configured in Contacts → add/edit). Status: ✅ done (schema
+  column `contacts.signaling_server` with migration for existing DBs; forms; routing
+  in `ConnectToContactAsync`/`HandleIncomingConnection`/`AcceptContactRequest`;
   tests serialize shared app-data via an xUnit collection).
 - FR-7.3 **Auto-accept for known contacts**: when an offer arrives from a peer that
   already exists in the local contact list, the recipient's app accepts automatically
@@ -109,6 +112,13 @@ implements **text chat only** for v1 (see below).
 - FR-7.5 Chats are reopened per contact: selecting a contact reconnects and loads
   the stored (decrypted-on-display) history. Status: ✅ done (chat connect loads
   history lines before connecting).
+- FR-7.6 **Chat navigation** (2026-11-18): clicking a contact's **Chat** button
+  opens the chat surface with that contact — showing **who you're talking to**
+  (nickname + key preview + connection state) at the top of the chat, with a
+  back control to Contacts. The chat is NOT a tab (tabs made the peer ambiguous).
+  Incoming auto-accepted conversations open the same surface. Status: ✅ done
+  (chat is an overlay over the tab area; LeaveChat returns to the tabs without
+  dropping the connection).
 
 ### FR-8 Notifications screen ⏳ **in progress (2026-11-17)**
 - FR-8.1 A dedicated **Notifications screen** shows contact requests. Status: ✅
@@ -148,6 +158,14 @@ implements **text chat only** for v1 (see below).
 - NFR-4 **Interoperability**: crypto and wire formats are byte-compatible with the
   iOS app — a .NET user and an iOS user can chat (verified by CryptoKit-generated
   test vectors and the identical Event JSON shape).
+- NFR-5 **Dark/light theme support** (2026-11-18, main requirement): the whole app
+  renders correctly in the OS dark AND light theme — no unreadable text, no
+  hardcoded single-theme colors. Implemented via a theme-dictionary palette
+  (`App.axaml`: Chrome/Card/Form/Pill brushes, per-direction bubble background +
+  text brushes, danger and ID-link accents) consumed with `DynamicResource`;
+  `RequestedThemeVariant="Default"` follows the OS and restyles live. Status: ✅
+  done (all surfaces migrated: header, contacts list/cards, forms, notifications,
+  chat overlay, settings, diagnostics, footer, bubbles).
 
 ## 4. Wire formats (for interop reference)
 

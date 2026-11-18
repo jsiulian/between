@@ -3,11 +3,49 @@
              x:Class="chatxp.App.App"
              xmlns:local="using:chatxp.App"
              RequestedThemeVariant="Default">
-             <!-- "Default" ThemeVariant follows system theme variant. "Dark" or "Light" are other available options. -->
+             <!-- "Default" follows the OS theme variant; "Dark"/"Light" force one. -->
 
     <Application.DataTemplates>
         <local:ViewLocator />
     </Application.DataTemplates>
+
+    <!-- App palette: every surface/text brush is defined for BOTH themes and
+         consumed via DynamicResource so switching the OS theme restyles the app
+         live (NFR-5). -->
+    <Application.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.ThemeDictionaries>
+                <ResourceDictionary x:Key="Light">
+                    <SolidColorBrush x:Key="ChromeBrush" Color="#f4f4f8"/>
+                    <SolidColorBrush x:Key="ChromeForeground" Color="#23232e"/>
+                    <SolidColorBrush x:Key="MutedForeground" Color="#77777f"/>
+                    <SolidColorBrush x:Key="PillBrush" Color="#e6e6ee"/>
+                    <SolidColorBrush x:Key="CardBrush" Color="#ffffff"/>
+                    <SolidColorBrush x:Key="FormBrush" Color="#ffffff"/>
+                    <SolidColorBrush x:Key="BubbleMineBrush" Color="#2f7d5f"/>
+                    <SolidColorBrush x:Key="BubbleMineText" Color="#ffffff"/>
+                    <SolidColorBrush x:Key="BubbleTheirsBrush" Color="#e7e9ee"/>
+                    <SolidColorBrush x:Key="BubbleTheirsText" Color="#23232e"/>
+                    <SolidColorBrush x:Key="DangerBrush" Color="#b3261e"/>
+                    <SolidColorBrush x:Key="IdLinkBrush" Color="#1a5fb4"/>
+                </ResourceDictionary>
+                <ResourceDictionary x:Key="Dark">
+                    <SolidColorBrush x:Key="ChromeBrush" Color="#1b1b23"/>
+                    <SolidColorBrush x:Key="ChromeForeground" Color="#ececf2"/>
+                    <SolidColorBrush x:Key="MutedForeground" Color="#9a9aa8"/>
+                    <SolidColorBrush x:Key="PillBrush" Color="#2d2d3a"/>
+                    <SolidColorBrush x:Key="CardBrush" Color="#232330"/>
+                    <SolidColorBrush x:Key="FormBrush" Color="#20202b"/>
+                    <SolidColorBrush x:Key="BubbleMineBrush" Color="#1e5c46"/>
+                    <SolidColorBrush x:Key="BubbleMineText" Color="#f0f0f5"/>
+                    <SolidColorBrush x:Key="BubbleTheirsBrush" Color="#262633"/>
+                    <SolidColorBrush x:Key="BubbleTheirsText" Color="#f0f0f5"/>
+                    <SolidColorBrush x:Key="DangerBrush" Color="#ff6b6b"/>
+                    <SolidColorBrush x:Key="IdLinkBrush" Color="#8ab4ff"/>
+                </ResourceDictionary>
+            </ResourceDictionary.ThemeDictionaries>
+        </ResourceDictionary>
+    </Application.Resources>
 
     <Application.Styles>
         <FluentTheme />
